@@ -111,3 +111,25 @@ def icp_multiway_registration(
                 )
 
     return pose_graph
+
+
+def optimize_pose_graph(
+          pose_graph: o3d.pipelines.registration.PoseGraph,
+          max_correspondence_distance: float=.005,
+          edge_prune_threshold: float=.25,
+          preference_loop_closure: float=.1,
+          reference_node: int=0,
+):
+    
+	option = o3d.pipelines.registration.GlobalOptimizationOption(
+		max_correspondence_distance=max_correspondence_distance,
+		edge_prune_threshold=edge_prune_threshold,
+		preference_loop_closure=preference_loop_closure,
+		reference_node=reference_node)
+	with o3d.utility.VerbosityContextManager(
+			o3d.utility.VerbosityLevel.Debug) as cm:
+		o3d.pipelines.registration.global_optimization(
+			pose_graph,
+			o3d.pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
+			o3d.pipelines.registration.GlobalOptimizationConvergenceCriteria(),
+			option)
