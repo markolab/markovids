@@ -8,7 +8,7 @@ def _fit3(points):
         points (2d numpy array): each row is a group of points,
         columns correspond to x,y,z
     Returns:
-        plane (1d numpy array): linear plane fit-->a*x+b*y+c*z+d
+        plane (1d numpy array): linear plane fit-->a*x+b*y+c*z+d=0
     """
     a = points[1, :] - points[0, :]
     b = points[2, :] - points[0, :]
