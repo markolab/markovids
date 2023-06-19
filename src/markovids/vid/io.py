@@ -26,6 +26,7 @@ def read_frames_raw(
     movie_dtype="<u2",
     intrinsic_matrix=None,
     distortion_coeffs=None,
+    progress_bar=True,
     **kwargs,
 ):
 
@@ -41,19 +42,45 @@ def read_frames_raw(
     elif not frames or (type(frames) is range) and len(frames) == 0:
         frames = range(0, vid_info["nframes"])
 
-    seek_point = np.maximum(0, frames[0] * vid_info["bytes_per_frame"])
-    read_points = len(frames) * frame_size[0] * frame_size[1]
-
-    dims = (len(frames), frame_size[1], frame_size[0])
-    with open(filename, "rb") as f:
-        f.seek(int(seek_point))
-        chunk = np.fromfile(file=f, dtype=dtype, count=read_points).reshape(dims)
+    dims = (vid_info["nframes"], frame_size[1], frame_size[0])
+    mmap_obj = np.memmap(filename, dtype=dtype, mode="r", offset=0, shape=dims)
+    chunk = mmap_obj[frames]
+    
+    # seek_point = np.maximum(0, frames[0] * vid_info["bytes_per_frame"])
+    # read_points = len(frames) * frame_size[0] * frame_size[1]
+    
+    # with open(filename, "rb") as f:
+    #     f.seek(int(seek_point))
+    #     chunk = np.fromfile(file=f, dtype=dtype, count=read_points).reshape(dims)
 
     if (intrinsic_matrix is not None) and (distortion_coeffs is not None):
-        for i, _frame in tqdm(enumerate(chunk), total=len(chunk), desc="Removing frame distortion"):
+        for i, _frame in tqdm(enumerate(chunk), total=len(chunk), desc="Removing frame distortion", disable=not progress_bar):
             chunk[i] = cv2.undistort(_frame, intrinsic_matrix, distortion_coeffs)
 
     return chunk
+
+
+default_config = {"dtype": "<u2", "frame_size": (640, 480)}
+
+
+def read_frames_multicam(
+    paths: dict, frames: dict, config: dict = {}, tick_period: float = 1e9, progress_bar: bool = True
+):
+    # config should contain frame_size and numpy data type
+    # PATHs should be dictionary where camera is key...
+    # CONFIGs should be dictionary where camera is key...
+    # make sure we support inflating frames with nans...
+    dat = {}
+    for _cam, _path in paths.items():
+        try:
+            use_config = config[_cam]
+            use_config = use_config | default_config
+        except KeyError:
+            use_config = default_config
+        dat[_cam] = read_frames_raw(_path, frames=frames[_cam], progress_bar=progress_bar, **use_config)
+
+    return dat
+
 
 
 def fill_timestamps(
