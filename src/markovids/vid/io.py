@@ -23,7 +23,7 @@ def read_frames_raw(
     filename,
     frames=None,
     frame_size=(512, 424),
-    movie_dtype="<u2",
+    dtype=np.dtype("<u2"),
     intrinsic_matrix=None,
     distortion_coeffs=None,
     progress_bar=True,
@@ -31,7 +31,6 @@ def read_frames_raw(
 ):
 
     # TODO, if any frame indices are a nan or less than 0, save to insert into array...
-    dtype = np.dtype(movie_dtype) 
     vid_info = get_raw_info(filename, frame_size=frame_size, dtype=dtype)
 
     if vid_info["dims"] != frame_size:
@@ -46,13 +45,6 @@ def read_frames_raw(
     mmap_obj = np.memmap(filename, dtype=dtype, mode="r", offset=0, shape=dims)
     chunk = mmap_obj[frames]
     
-    # seek_point = np.maximum(0, frames[0] * vid_info["bytes_per_frame"])
-    # read_points = len(frames) * frame_size[0] * frame_size[1]
-    
-    # with open(filename, "rb") as f:
-    #     f.seek(int(seek_point))
-    #     chunk = np.fromfile(file=f, dtype=dtype, count=read_points).reshape(dims)
-
     if (intrinsic_matrix is not None) and (distortion_coeffs is not None):
         for i, _frame in tqdm(enumerate(chunk), total=len(chunk), desc="Removing frame distortion", disable=not progress_bar):
             chunk[i] = cv2.undistort(_frame, intrinsic_matrix, distortion_coeffs)
@@ -60,7 +52,7 @@ def read_frames_raw(
     return chunk
 
 
-default_config = {"dtype": "<u2", "frame_size": (640, 480)}
+default_config = {"dtype": np.dtype("<u2"), "frame_size": (640, 480)}
 
 
 def read_frames_multicam(
@@ -344,3 +336,44 @@ def make_timebase_uniform(
         shift += _nframes
 
     return new_timestamps, new_frames
+
+
+def get_bground(
+    dat_path,
+    spacing=500,
+    frame_size=(640, 480),
+    dtype=np.dtype("<u2"),
+    agg_func=np.nanmean,
+    valid_range=(1000, 2000),
+    median_kernels=(3,5),
+    **kwargs
+):
+    from scipy import interpolate
+    vid_inf = get_raw_info(dat_path, dtype=dtype, frame_size=frame_size)
+    use_frames = list(range(0, vid_inf["nframes"], spacing))
+    bground_frames = read_frames_raw(
+        dat_path, frames=use_frames, dtype=dtype, frame_size=frame_size, **kwargs
+    ).astype("float32") 
+    nframes, height, width = bground_frames.shape
+    bground_frames[bground_frames < valid_range[0]] = np.nan
+    bground_frames[bground_frames > valid_range[1]] = np.nan 
+    bground = agg_func(bground_frames, axis=0)
+    
+    xx, yy = np.meshgrid(np.arange(width), np.arange(height))
+    zz = bground
+    valid_pxs = ~np.isnan(zz.ravel())
+    
+    newz = interpolate.griddata(
+        (xx.ravel()[valid_pxs], yy.ravel()[valid_pxs]),
+        zz.ravel()[valid_pxs],
+        (xx, yy),
+        method="nearest",
+        fill_value=np.nan,
+    )
+
+    bground = newz
+    # # interpolate nans and filter
+    for _med in median_kernels:
+        bground = cv2.medianBlur(bground, _med)
+        
+    return bground
