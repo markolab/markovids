@@ -7,12 +7,21 @@ import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
 
-
 def get_raw_info(filename, dtype=np.dtype("<u2"), frame_size=(512, 424)):
-    bytes_per_frame = frame_size[0] * frame_size[1] * dtype.itemsize
+    if isinstance(filename, np.memmap):
+        dtype = filename.dtype
+        total_bytes = np.prod(filename.shape) * dtype.itemsize
+        frame_size = filename.shape[1:]
+        bytes_per_frame = frame_size[0] * frame_size[1] * dtype.itemsize
+        nframes = len(filename)
+    else:
+        total_bytes = os.stat(filename).st_size
+        bytes_per_frame = frame_size[0] * frame_size[1] * dtype.itemsize
+        nframes = int(os.stat(filename).st_size / bytes_per_frame)
+
     file_info = {
-        "bytes": os.stat(filename).st_size,
-        "nframes": int(os.stat(filename).st_size / bytes_per_frame),
+        "bytes": total_bytes,
+        "nframes": nframes,
         "dims": frame_size,
         "bytes_per_frame": bytes_per_frame,
     }
@@ -31,25 +40,41 @@ def read_frames_raw(
 ):
 
     # TODO, if any frame indices are a nan or less than 0, save to insert into array...
-    vid_info = get_raw_info(filename, frame_size=frame_size, dtype=dtype)
 
+
+    vid_info = get_raw_info(filename, frame_size=frame_size, dtype=dtype)
     if vid_info["dims"] != frame_size:
         frame_size = vid_info["dims"]
+    nframes = vid_info["nframes"]
 
-    if type(frames) is int:
-        frames = [frames]
-    elif not frames or (type(frames) is range) and len(frames) == 0:
-        frames = range(0, vid_info["nframes"])
-
-    dims = (vid_info["nframes"], frame_size[1], frame_size[0])
-    if isinstance(filename, np.memmap):
-        print("Using mmap")
-        mmap_obj = filename
-        print("done")
+    if frames is None:
+        # if frames is None load everything
+        frames = (0, nframes)
+        use_range = range(*frames)
+        offset = 0
+    elif isinstance(frames, tuple):
+        # if it's a tuple, assume it's left_edge, right_edge, turn into range
+        left_edge, right_edge = frames
+        offset = left_edge * vid_info["bytes_per_frame"]
+        use_range = range(0, min((right_edge - left_edge) + 1, nframes))
+    elif isinstance(frames, range):
+        # range and tuples are contiguous
+        left_edge, right_edge = list(frames)[0], list(frames)[-1]
+        offset = left_edge * vid_info["bytes_per_frame"]
+        use_range = range(0, min((right_edge - left_edge) + 1, nframes))
+    elif isinstance(frames, list):
+        # a list is NOT contiguous, simply pass it to the memmap
+        use_range = frames
+        offset = 0
     else:
-        print("Making new memmap")
-        mmap_obj = np.memmap(filename, dtype=dtype, mode="r", offset=0, shape=dims)
-    chunk = mmap_obj[frames]
+        raise RuntimeError("Did not understand frame argument")
+
+    dims = (nframes, frame_size[1], frame_size[0])
+    if isinstance(filename, np.memmap):
+        mmap_obj = filename
+    else:
+        mmap_obj = np.memmap(filename, dtype=dtype, mode="r", offset = offset, shape=dims)
+    chunk = mmap_obj[use_range]
     
     if (intrinsic_matrix is not None) and (distortion_coeffs is not None):
         for i, _frame in tqdm(enumerate(chunk), total=len(chunk), desc="Removing frame distortion", disable=not progress_bar):
