@@ -7,6 +7,55 @@ import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
 
+# simple command to pipe frames to an ffv1 file
+def write_frames(filename, frames, threads=6, fps=30,
+                 pixel_format='gray16le', codec='ffv1', close_pipe=True,
+                 pipe=None, slices=24, slicecrc=1, frame_size=None, get_cmd=False):
+    """
+    Write frames to avi file using the ffv1 lossless encoder
+    """
+
+    # we probably want to include a warning about multiples of 32 for videos
+    # (then we can use pyav and some speedier tools)
+
+    if not frame_size and type(frames) is np.ndarray:
+        frame_size = '{0:d}x{1:d}'.format(frames.shape[2], frames.shape[1])
+    elif not frame_size and type(frames) is tuple:
+        frame_size = '{0:d}x{1:d}'.format(frames[0], frames[1])
+
+    command = ['ffmpeg',
+               '-y',
+               '-loglevel', 'fatal',
+               '-framerate', str(fps),
+               '-f', 'rawvideo',
+               '-s', frame_size,
+               '-pix_fmt', pixel_format,
+               '-i', '-',
+               '-an',
+               '-vcodec', codec,
+               '-threads', str(threads),
+               '-slices', str(slices),
+               '-slicecrc', str(slicecrc),
+               '-r', str(fps),
+               filename]
+
+    if get_cmd:
+        return command
+
+    if not pipe:
+        pipe = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    for i in tqdm.tqdm(range(frames.shape[0])):
+        pipe.stdin.write(frames[i, ...].astype('uint16').tostring())
+
+    if close_pipe:
+        pipe.stdin.close()
+        return None
+    else:
+        return pipe
+
+
 def get_raw_info(filename, dtype=np.dtype("<u2"), frame_size=(512, 424)):
     if isinstance(filename, np.memmap):
         dtype = filename.dtype
