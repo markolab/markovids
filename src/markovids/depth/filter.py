@@ -49,3 +49,34 @@ def clean_frames(
             filtered_frames = signal.medfilt(filtered_frames, [prefilter_time[j], 1, 1])
 
     return filtered_frames
+
+
+# filters outliers over time
+def time_hampel_filter(
+    dat, length=10, mads=4, fill_value="median", correction=1.4826, inplace=True
+):
+    from scipy import ndimage
+
+    nframes, rows, columns = dat.shape
+
+    if inplace:
+        use_dat = dat
+    else:
+        use_dat = dat.copy()
+
+    med = ndimage.median_filter(use_dat.astype("float32"), size=(length, 1, 1))
+    absdev = np.abs(use_dat - med)
+    mad = ndimage.median_filter(absdev, size=(length, 1, 1))
+
+    if correction is not None:
+        mad *= correction
+
+    absdev /= mad + 1e-3
+    outliers = absdev > mads
+
+    if fill_value == "median":
+        use_dat[outliers] = med[outliers]
+    elif isinstance(fill_value, (float, int)):
+        use_dat[outliers] = fill_value
+
+    return use_dat

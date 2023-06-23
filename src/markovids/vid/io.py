@@ -42,7 +42,13 @@ def read_frames_raw(
         frames = range(0, vid_info["nframes"])
 
     dims = (vid_info["nframes"], frame_size[1], frame_size[0])
-    mmap_obj = np.memmap(filename, dtype=dtype, mode="r", offset=0, shape=dims)
+    if isinstance(filename, np.memmap):
+        print("Using mmap")
+        mmap_obj = filename
+        print("done")
+    else:
+        print("Making new memmap")
+        mmap_obj = np.memmap(filename, dtype=dtype, mode="r", offset=0, shape=dims)
     chunk = mmap_obj[frames]
     
     if (intrinsic_matrix is not None) and (distortion_coeffs is not None):
@@ -377,3 +383,12 @@ def get_bground(
         bground = cv2.medianBlur(bground, _med)
         
     return bground
+
+
+def pixel_format_to_np_dtype(pixel_format: str):
+
+    if pixel_format == "Coord3D_C16":
+        np_dtype = np.dtype("<u2")
+    
+    return np_dtype
+    

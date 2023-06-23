@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 from tqdm.auto import tqdm
 
 
@@ -51,16 +52,12 @@ def fit_ransac(
     Returns:
         best_plane (1d numpy array): plane fit to data
     """
-    use_points = np.logical_and(
-        depth_image > depth_range[0], depth_image < depth_range[1]
-    )
+    use_points = np.logical_and(depth_image > depth_range[0], depth_image < depth_range[1])
 
     if mask is not None:
         use_points = np.logical_and(use_points, mask)
 
-    xx, yy = np.meshgrid(
-        np.arange(depth_image.shape[1]), np.arange(depth_image.shape[0])
-    )
+    xx, yy = np.meshgrid(np.arange(depth_image.shape[1]), np.arange(depth_image.shape[0]))
 
     coords = np.vstack(
         (
@@ -78,7 +75,6 @@ def fit_ransac(
     npoints = np.sum(use_points)
 
     for i in tqdm(range(iters), disable=not progress_bar, desc="Finding plane"):
-
         sel = coords[np.random.choice(coords.shape[0], 3, replace=True), :]
         tmp_plane = _fit3(sel)
 
@@ -89,12 +85,7 @@ def fit_ransac(
         inliers = dist < noise_tolerance
         ninliers = np.sum(inliers)
 
-        if (
-            (ninliers / npoints) > in_ratio
-            and ninliers > best_num
-            and np.mean(dist) < best_dist
-        ):
-
+        if (ninliers / npoints) > in_ratio and ninliers > best_num and np.mean(dist) < best_dist:
             best_dist = np.mean(dist)
             best_num = ninliers
             best_plane = tmp_plane
@@ -106,3 +97,69 @@ def fit_ransac(
     dist = np.abs(np.dot(coords, best_plane[:3]) + best_plane[3])
 
     return best_plane, dist
+
+strel_element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+
+def get_floor(
+    bground_im,
+    floor_range=(1300, 1600),
+    noise_tolerance=50,
+    median_kernels=(3, 5),
+    floor_threshold=30,
+    weights=(1., 0., 0.),
+    dilate_element=strel_element,
+    dilations=5,
+):
+    from skimage import measure
+    from scipy import stats, ndimage
+
+    result = fit_ransac(bground_im, depth_range=floor_range, noise_tolerance=noise_tolerance)
+    _dist_im = result[1].reshape(*bground_im.shape).astype("float32")
+    valid_pixels = ~np.isnan(_dist_im)
+
+    # # interpolate nans and filter
+    for _med in median_kernels:
+        _dist_im = cv2.medianBlur(_dist_im, _med)
+
+    dist_im = _dist_im
+
+    bin_im = dist_im < floor_threshold
+    label_im = measure.label(bin_im)
+    region_properties = measure.regionprops(label_im)
+    
+    areas = np.zeros((len(region_properties),))
+    extents = np.zeros_like(areas)
+    dists = np.zeros_like(extents)
+
+    # get the max distance from the center, area and extent
+
+    center = np.array(bin_im.shape) / 2
+
+    for i, props in enumerate(region_properties):
+        areas[i] = props.area
+        extents[i] = props.extent
+        tmp_dists = np.sqrt(np.sum(np.square(props.coords - center), 1))
+        dists[i] = tmp_dists.max()
+    
+    ranks = np.vstack(
+        (
+            stats.rankdata(-areas, method="max"),
+            stats.rankdata(-extents, method="max"),
+            stats.rankdata(dists, method="max"),
+        )
+    )
+    weight_array = np.array(weights, "float32")
+    shape_index = np.mean(
+        np.multiply(ranks.astype("float32"), weight_array[:, np.newaxis]), 0
+    ).argsort()
+
+    roi = np.zeros(bin_im.shape, dtype="bool")
+    roi[
+        region_properties[shape_index[0]].coords[:, 0],
+        region_properties[shape_index[0]].coords[:, 1],
+    ] = 1
+
+    roi = ndimage.binary_fill_holes(roi).astype("uint8")
+    roi = cv2.dilate(roi, dilate_element, iterations=dilations)
+
+    return roi
