@@ -71,7 +71,7 @@ class RawFileReader:
     def close(self):
         self.file_object.close()
 
-    def undistort_frames(self, frames):
+    def undistort_frames(self, frames, progress_bar=True):
         if (self.intrinsic_matrix is not None) and (self.distortion_coeffs is not None):
             for i, _frame in tqdm(
                 enumerate(frames),
