@@ -225,7 +225,6 @@ def read_frames_raw(
     else:
         raise RuntimeError("Did not understand frame argument")
 
-    print(dims)
     if isinstance(filename, np.memmap):
         mmap_obj = filename
     else:
