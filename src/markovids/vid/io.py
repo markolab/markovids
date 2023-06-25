@@ -126,7 +126,7 @@ class RawFileReader:
             seek_point = frame_range[0] * self.bytes_per_frame
             read_points = frame_range[1] * self.npixels
             dims = ((frame_range[1] - frame_range[0]) + 1, self.frame_size[1], self.frame_size[0])
-        elif isinstance(frame_range, int):
+        elif isinstance(frame_range, (int, np.integer)):
             seek_point = frame_range * self.bytes_per_frame
             read_points = self.npixels
             dims = (self.frame_size[1], self.frame_size[0])
@@ -136,7 +136,7 @@ class RawFileReader:
             read_points = ((_tmp[-1] - _tmp[0]) + 1) * self.npixels
             dims = ((_tmp[-1] - _tmp[0]) + 1, self.frame_size[1], self.frame_size[0])
             # run through each element in the list
-        elif isinstance(frame_range, list):
+        elif isinstance(frame_range, (list, np.ndarray)):
             nframes = len(frame_range)
             dat = np.zeros((nframes, self.frame_size[1], self.frame_size[0]), dtype=self.dtype)
             for i, _frame in enumerate(frame_range):
@@ -239,7 +239,7 @@ class AviReader:
     def get_frames(self, frame_range=None):
         import datetime
         list_order = None
-        if not frame_range:
+        if frame_range is None:
             use_frames = np.arange(self.nframes).astype("int16")
             frame_select = [
                 "-ss",
@@ -254,7 +254,7 @@ class AviReader:
                 "-vframes",
                 str(len(frame_range)),
             ]
-        elif isinstance(frame_range, list):
+        elif isinstance(frame_range, (list, np.ndarray)):
             # NEED TO REORDER USING THE LIST ORDER
             list_order = np.argsort(np.argsort(frame_range))
             list_string = "+".join([f"eq(n\,{_frame})" for _frame in frame_range])
