@@ -22,7 +22,7 @@ class RawFileReader:
         self.frame_size = frame_size
         self.npixels = np.prod(self.frame_size)
         self.distortion_coeffs = distortion_coeffs
-        self.intrinsics_matrix = intrinsic_matrix
+        self.intrinsic_matrix = intrinsic_matrix
         self.get_file_info()
 
     def open(self):
