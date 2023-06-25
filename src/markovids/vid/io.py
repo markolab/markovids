@@ -7,6 +7,81 @@ import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
 
+class AviWriter:
+    def __init__(
+        self,
+        filepath,
+        frame_size=(640, 480),
+        dtype=np.dtype("<u2"),
+        fps=100,
+        pixel_format="gray16le",
+        codec="ffv1",
+        threads=6,
+        slices=25,
+        slicecrc=1,
+    ):
+        ext = os.path.splitext(filepath)[1]
+        if ext != ".avi":
+            raise RuntimeError("Must use avi container (extension must be avi)")
+        self.filepath = filepath
+        self.fps = fps
+        self.pixel_format = pixel_format
+        self.codec = codec
+        self.threads = threads
+        self.slices = slices
+        self.slicecrc = slicecrc
+        self.frame_size = frame_size
+        self.dtype = dtype
+        self.pipe = None
+
+    def open(self):
+        command = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "fatal",
+            "-framerate",
+            str(self.fps),
+            "-f",
+            "rawvideo",
+            "-s",
+            "{:d}x{:d}".format(*self.frame_size),
+            "-pix_fmt",
+            self.pixel_format,
+            "-i",
+            "-",
+            "-an",
+            "-vcodec",
+            self.codec,
+            "-threads",
+            str(self.threads),
+            "-slices",
+            str(self.slices),
+            "-slicecrc",
+            str(self.slicecrc),
+            "-r",
+            str(self.fps),
+            self.filepath,
+        ]
+
+        self.pipe = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+
+    def write_frames(
+        self, frames, progress_bar=True
+    ):  # may need to enforce endianness...
+        if self.pipe is None:
+            self.open()
+        for i in tqdm(range(len(frames)), disable=not progress_bar):
+            self.pipe.stdin.write(frames[i].astype(self.dtype).tobytes())
+
+    def close(self):
+        self.pipe.stdin.close()
+        self.pipe.wait()
+        return None
+
+
 def AutoReader(filepath, **kwargs):
     ext = os.path.splitext(filepath)[1]
     if ext == ".dat":
@@ -181,7 +256,7 @@ class AviReader:
             ]
         elif isinstance(frame_range, list):
             # NEED TO REORDER USING THE LIST ORDER
-            list_order = np.argsort(frame_range)
+            list_order = np.argsort(np.argsort(frame_range))
             list_string = "+".join([f"eq(n\,{_frame})" for _frame in frame_range])
             # list_string = 'eq(n\,1)'
             frame_select = [
