@@ -612,11 +612,11 @@ def get_bground(
 ):
     from scipy import interpolate
 
-    ext = os.path.splitext(dat_path)
+    ext = os.path.splitext(dat_path)[1]
     if ext == ".avi":
-        reader = AviReader(dat_path, frame_size=frame_size, dtype=dtype)
+        reader = AviReader(dat_path, frame_size=frame_size, dtype=dtype, **kwargs)
     elif ext == ".dat":
-        reader = RawFileReader(dat_path, frame_size=frame_size, dtype=dtype)
+        reader = RawFileReader(dat_path, frame_size=frame_size, dtype=dtype, **kwargs)
     else:
         raise RuntimeError(f"Did not understand extension {ext}")
     reader.open()
@@ -629,6 +629,7 @@ def get_bground(
     bground_frames[bground_frames > valid_range[1]] = np.nan
     bground = agg_func(bground_frames, axis=0)
 
+    height, width = bground.shape
     xx, yy = np.meshgrid(np.arange(width), np.arange(height))
     zz = bground
     valid_pxs = ~np.isnan(zz.ravel())
