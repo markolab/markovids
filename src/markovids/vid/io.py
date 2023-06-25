@@ -7,6 +7,15 @@ import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
 
+def AutoReader(filepath, **kwargs):
+    ext = os.path.splitext(filepath)[1]
+    if ext == ".dat":
+        reader = RawFileReader(filepath, **kwargs)
+    elif ext == ".avi":
+        reader = AviReader(filepath, **kwargs)
+    return reader
+
+    
 class RawFileReader:
     def __init__(
         self,
@@ -321,11 +330,7 @@ def read_frames_multicam(
             use_config = default_config
         ext = os.path.splitext(_path)[1]
 
-        if ext == ".avi":
-            reader = AviReader(_path, **use_config)
-        elif ext == ".dat":
-            reader = RawFileReader(_path, **use_config)
-
+        reader = AutoReader(_path, **use_config)
         _dat = reader.open()
         _dat = reader.get_frames(frames[_cam])
         _dat = reader.undistort_frames(_dat)
@@ -613,12 +618,7 @@ def get_bground(
     from scipy import interpolate
 
     ext = os.path.splitext(dat_path)[1]
-    if ext == ".avi":
-        reader = AviReader(dat_path, frame_size=frame_size, dtype=dtype, **kwargs)
-    elif ext == ".dat":
-        reader = RawFileReader(dat_path, frame_size=frame_size, dtype=dtype, **kwargs)
-    else:
-        raise RuntimeError(f"Did not understand extension {ext}")
+    reader = AutoReader(dat_path, frame_size=frame_size, dtype=dtype, **kwargs)
     reader.open()
     use_frames = list(range(0, reader.nframes, spacing))
     bground_frames = reader.get_frames(use_frames).astype("float32")
