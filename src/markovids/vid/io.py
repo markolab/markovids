@@ -31,12 +31,15 @@ class RawFileReader:
         self.npixels = np.prod(self.frame_size)
         self.distortion_coeffs = distortion_coeffs
         self.intrinsic_matrix = intrinsic_matrix
+        self.file_object = None
         self.get_file_info()
 
     def open(self):
         self.file_object = open(self.filepath, "rb")
 
     def get_frames(self, frame_range=None):
+        if self.file_object is None:
+            self.open()
         skip_read = False
         if frame_range is None:
             # if frames is None load everything
@@ -160,7 +163,7 @@ class AviReader:
 
     def get_frames(self, frame_range=None):
         import datetime
-
+        list_order = None
         if not frame_range:
             use_frames = np.arange(self.nframes).astype("int16")
             frame_select = [
@@ -177,6 +180,8 @@ class AviReader:
                 str(len(frame_range)),
             ]
         elif isinstance(frame_range, list):
+            # NEED TO REORDER USING THE LIST ORDER
+            list_order = np.argsort(frame_range)
             list_string = "+".join([f"eq(n\,{_frame})" for _frame in frame_range])
             # list_string = 'eq(n\,1)'
             frame_select = [
@@ -231,6 +236,8 @@ class AviReader:
         dat = np.frombuffer(out, dtype=self.dtype).reshape(
             (n_out_frames, self.frame_size[1], self.frame_size[0])
         )
+        if list_order is not None:
+            dat = dat[list_order]
         return dat
 
 
