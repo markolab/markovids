@@ -8,19 +8,27 @@ from tqdm.auto import tqdm
 
 
 class RawFileReader:
-    def __init__(self, filepath, frame_size=(640,480), dtype=np.dtype("<u2"), shape=None, intrinsic_matrix=None, distortion_coeffs=None):
+    def __init__(
+        self,
+        filepath,
+        frame_size=(640, 480),
+        dtype=np.dtype("<u2"),
+        shape=None,
+        intrinsic_matrix=None,
+        distortion_coeffs=None,
+    ):
         self.dtype = dtype
         self.filepath = filepath
         self.frame_size = frame_size
         self.npixels = np.prod(self.frame_size)
-        self.distortion_coeffs= distortion_coeffs
+        self.distortion_coeffs = distortion_coeffs
         self.intrinsics_matrix = intrinsic_matrix
         self.get_file_info()
-    
+
     def open(self):
         self.file_object = open(self.filepath, "rb")
         # self.mmap_obj = np.memmap(self.filepath, dtype=self.dtype, mode="r", offset=0, shape=self.dims)
-    
+
     def get_frames(self, frame_range=None):
         skip_read = False
         if frame_range is None:
@@ -47,29 +55,33 @@ class RawFileReader:
             nframes = len(frame_range)
             dat = np.zeros((nframes, self.frame_size[1], self.frame_size[0]), dtype=self.dtype)
             for i, _frame in enumerate(frame_range):
-                dat[i] = self.get_frames(_frame) 
+                dat[i] = self.get_frames(_frame)
             skip_read = True
         else:
             raise RuntimeError("Did not understand frame range type")
-    
+
         if not skip_read:
             self.file_object.seek(int(seek_point))
-            dat = np.fromfile(file=self.file_object, dtype=self.dtype, count=read_points).reshape(dims)
+            dat = np.fromfile(file=self.file_object, dtype=self.dtype, count=read_points).reshape(
+                dims
+            )
 
         return dat
-    
 
     def close(self):
         self.file_object.close()
-    
-        
+
     def undistort_frames(self, frames):
         if (self.intrinsic_matrix is not None) and (self.distortion_coeffs is not None):
-            for i, _frame in tqdm(enumerate(frames), total=len(frames), desc="Removing frame distortion", disable=not progress_bar):
+            for i, _frame in tqdm(
+                enumerate(frames),
+                total=len(frames),
+                desc="Removing frame distortion",
+                disable=not progress_bar,
+            ):
                 frames[i] = cv2.undistort(_frame, self.intrinsic_matrix, self.distortion_coeffs)
         return frames
-            
-        
+
     def get_file_info(self):
         self.total_bytes = os.stat(self.filepath).st_size
         self.bytes_per_frame = np.prod(self.frame_size) * self.dtype.itemsize
@@ -78,9 +90,20 @@ class RawFileReader:
 
 
 # simple command to pipe frames to an ffv1 file
-def write_frames(filename, frames, threads=6, fps=30,
-                 pixel_format='gray16le', codec='ffv1', close_pipe=True,
-                 pipe=None, slices=24, slicecrc=1, frame_size=None, get_cmd=False):
+def write_frames(
+    filename,
+    frames,
+    threads=6,
+    fps=30,
+    pixel_format="gray16le",
+    codec="ffv1",
+    close_pipe=True,
+    pipe=None,
+    slices=24,
+    slicecrc=1,
+    frame_size=None,
+    get_cmd=False,
+):
     """
     Write frames to avi file using the ffv1 lossless encoder
     """
@@ -89,35 +112,47 @@ def write_frames(filename, frames, threads=6, fps=30,
     # (then we can use pyav and some speedier tools)
 
     if not frame_size and type(frames) is np.ndarray:
-        frame_size = '{0:d}x{1:d}'.format(frames.shape[2], frames.shape[1])
+        frame_size = "{0:d}x{1:d}".format(frames.shape[2], frames.shape[1])
     elif not frame_size and type(frames) is tuple:
-        frame_size = '{0:d}x{1:d}'.format(frames[0], frames[1])
+        frame_size = "{0:d}x{1:d}".format(frames[0], frames[1])
 
-    command = ['ffmpeg',
-               '-y',
-               '-loglevel', 'fatal',
-               '-framerate', str(fps),
-               '-f', 'rawvideo',
-               '-s', frame_size,
-               '-pix_fmt', pixel_format,
-               '-i', '-',
-               '-an',
-               '-vcodec', codec,
-               '-threads', str(threads),
-               '-slices', str(slices),
-               '-slicecrc', str(slicecrc),
-               '-r', str(fps),
-               filename]
+    command = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "fatal",
+        "-framerate",
+        str(fps),
+        "-f",
+        "rawvideo",
+        "-s",
+        frame_size,
+        "-pix_fmt",
+        pixel_format,
+        "-i",
+        "-",
+        "-an",
+        "-vcodec",
+        codec,
+        "-threads",
+        str(threads),
+        "-slices",
+        str(slices),
+        "-slicecrc",
+        str(slicecrc),
+        "-r",
+        str(fps),
+        filename,
+    ]
 
     if get_cmd:
         return command
 
     if not pipe:
-        pipe = subprocess.Popen(
-            command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
     for i in tqdm.tqdm(range(frames.shape[0])):
-        pipe.stdin.write(frames[i, ...].astype('uint16').tostring())
+        pipe.stdin.write(frames[i, ...].astype("uint16").tostring())
 
     if close_pipe:
         pipe.stdin.close()
@@ -157,9 +192,7 @@ def read_frames_raw(
     progress_bar=True,
     **kwargs,
 ):
-
     # TODO, if any frame indices are a nan or less than 0, save to insert into array...
-
 
     vid_info = get_raw_info(filename, frame_size=frame_size, dtype=dtype)
     if vid_info["dims"] != frame_size:
@@ -196,11 +229,16 @@ def read_frames_raw(
     if isinstance(filename, np.memmap):
         mmap_obj = filename
     else:
-        mmap_obj = np.memmap(filename, dtype=dtype, mode="r", offset = offset, shape=dims)
+        mmap_obj = np.memmap(filename, dtype=dtype, mode="r", offset=offset, shape=dims)
     chunk = mmap_obj[use_range]
-    
+
     if (intrinsic_matrix is not None) and (distortion_coeffs is not None):
-        for i, _frame in tqdm(enumerate(chunk), total=len(chunk), desc="Removing frame distortion", disable=not progress_bar):
+        for i, _frame in tqdm(
+            enumerate(chunk),
+            total=len(chunk),
+            desc="Removing frame distortion",
+            disable=not progress_bar,
+        ):
             chunk[i] = cv2.undistort(_frame, intrinsic_matrix, distortion_coeffs)
 
     return chunk
@@ -210,7 +248,11 @@ default_config = {"dtype": np.dtype("<u2"), "frame_size": (640, 480)}
 
 
 def read_frames_multicam(
-    paths: dict, frames: dict, config: dict = {}, tick_period: float = 1e9, progress_bar: bool = True
+    paths: dict,
+    frames: dict,
+    config: dict = {},
+    tick_period: float = 1e9,
+    progress_bar: bool = True,
 ):
     # config should contain frame_size and numpy data type
     # PATHs should be dictionary where camera is key...
@@ -223,25 +265,25 @@ def read_frames_multicam(
             use_config = use_config | default_config
         except KeyError:
             use_config = default_config
-        dat[_cam] = read_frames_raw(_path, frames=frames[_cam], progress_bar=progress_bar, **use_config)
+        dat[_cam] = read_frames_raw(
+            _path, frames=frames[_cam], progress_bar=progress_bar, **use_config
+        )
 
     return dat
 
 
-
-def fill_timestamps(
-    timestamps, use_timestamp_field="device_timestamp", period=0.01
-):
-    
+def fill_timestamps(timestamps, use_timestamp_field="device_timestamp", period=0.01):
     # TODO: add timestamp check as well, not just capture number
     capture_diff = timestamps["capture_number"].diff()
     gaps = capture_diff > 1
     nmissing_frames = capture_diff[gaps] - 1
-    
+
     new_timestamps = timestamps.copy()
     new_timestamps.index.name = "frame_index"
     # new_timestamps["is_pad"] = False
-    new_timestamps = new_timestamps.reset_index().set_index("capture_number")[["frame_index", use_timestamp_field]]
+    new_timestamps = new_timestamps.reset_index().set_index("capture_number")[
+        ["frame_index", use_timestamp_field]
+    ]
 
     to_insert_index = []
     to_insert_values = []
@@ -252,18 +294,16 @@ def fill_timestamps(
         last_good_value = new_timestamps.loc[cap_number, use_timestamp_field]
         to_insert_index += (cap_number + new_idx).tolist()
         to_insert_values += (last_good_value + new_idx * period).tolist()
-        to_insert_array_loc.append(
-            (new_timestamps.index.get_loc(cap_number) + 1, len(new_idx))
-        )
+        to_insert_array_loc.append((new_timestamps.index.get_loc(cap_number) + 1, len(new_idx)))
 
-    to_insert_values = {"frame_index": [np.nan] * len(to_insert_values),
-                        use_timestamp_field: to_insert_values}
-    insert_df = pd.DataFrame(
-        to_insert_values, index=to_insert_index
-    )
+    to_insert_values = {
+        "frame_index": [np.nan] * len(to_insert_values),
+        use_timestamp_field: to_insert_values,
+    }
+    insert_df = pd.DataFrame(to_insert_values, index=to_insert_index)
     insert_df.index.name = "capture_number"
     new_timestamps = pd.concat([new_timestamps, insert_df]).sort_index()
-    new_timestamps.index = range(len(new_timestamps)) # should be contiguous anyhow...
+    new_timestamps.index = range(len(new_timestamps))  # should be contiguous anyhow...
     new_timestamps["frame_index"] = new_timestamps["frame_index"].astype("Int32")
 
     return new_timestamps
@@ -271,6 +311,7 @@ def fill_timestamps(
 
 def read_timestamps(path, tick_period=1e9, fill=False, fill_kwargs={}):
     import io
+
     with open(path, "r") as table:
         buffer = io.StringIO("\n".join(line.strip() for line in table))
         df = pd.read_table(buffer, delimiter="\t")
@@ -283,8 +324,11 @@ def read_timestamps(path, tick_period=1e9, fill=False, fill_kwargs={}):
     return df
 
 
-def read_timestamps_multicam(path: dict, use_timestamp_field: str = "system_timestamp", merge_tolerance=.0035, fill=True): 
+def read_timestamps_multicam(
+    path: dict, use_timestamp_field: str = "system_timestamp", merge_tolerance=0.0035, fill=True
+):
     from functools import reduce
+
     cameras = list(path.keys())
     ts = {}
     for _cam in cameras:
@@ -295,7 +339,11 @@ def read_timestamps_multicam(path: dict, use_timestamp_field: str = "system_time
         ).rename(columns={"frame_index": _cam})
     merged_ts = reduce(
         lambda left, right: pd.merge_asof(
-            left, right, tolerance=merge_tolerance, on=use_timestamp_field, direction="nearest",
+            left,
+            right,
+            tolerance=merge_tolerance,
+            on=use_timestamp_field,
+            direction="nearest",
         ),
         ts.values(),
     )
@@ -400,7 +448,9 @@ def write_frames_preview(
         return command
 
     if not pipe:
-        pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        pipe = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stderr=subprocess.PIPE, stdout=subprocess.PIPE
+        )
 
     # scale frames to appropriate depth ranges
     use_cmap = plt.get_cmap(cmap)
@@ -444,10 +494,9 @@ def write_frames_preview(
         return pipe
 
 
-def make_timebase_uniform(
-    timestamps, frames, use_timestamp_field="system_timestamp", period=0.01
-):
+def make_timebase_uniform(timestamps, frames, use_timestamp_field="system_timestamp", period=0.01):
     import pandas as pd
+
     # TODO: add timestamp check as well, not just capture number
     capture_diff = timestamps["capture_number"].diff()
     gaps = capture_diff > 1
@@ -463,13 +512,9 @@ def make_timebase_uniform(
         last_good_value = new_timestamps.loc[cap_number]
         to_insert_index += (cap_number + new_idx).tolist()
         to_insert_values += (last_good_value + new_idx * period).tolist()
-        to_insert_array_loc.append(
-            (new_timestamps.index.get_loc(cap_number) + 1, len(new_idx))
-        )
+        to_insert_array_loc.append((new_timestamps.index.get_loc(cap_number) + 1, len(new_idx)))
 
-    insert_series = pd.Series(
-        to_insert_values, index=to_insert_index, name=use_timestamp_field
-    )
+    insert_series = pd.Series(to_insert_values, index=to_insert_index, name=use_timestamp_field)
     insert_series.index.name = "capture_number"
 
     new_timestamps = pd.concat([new_timestamps, insert_series]).sort_index()
@@ -499,24 +544,25 @@ def get_bground(
     dtype=np.dtype("<u2"),
     agg_func=np.nanmean,
     valid_range=(1000, 2000),
-    median_kernels=(3,5),
-    **kwargs
+    median_kernels=(3, 5),
+    **kwargs,
 ):
     from scipy import interpolate
+
     vid_inf = get_raw_info(dat_path, dtype=dtype, frame_size=frame_size)
     use_frames = list(range(0, vid_inf["nframes"], spacing))
     bground_frames = read_frames_raw(
         dat_path, frames=use_frames, dtype=dtype, frame_size=frame_size, **kwargs
-    ).astype("float32") 
+    ).astype("float32")
     nframes, height, width = bground_frames.shape
     bground_frames[bground_frames < valid_range[0]] = np.nan
-    bground_frames[bground_frames > valid_range[1]] = np.nan 
+    bground_frames[bground_frames > valid_range[1]] = np.nan
     bground = agg_func(bground_frames, axis=0)
-    
+
     xx, yy = np.meshgrid(np.arange(width), np.arange(height))
     zz = bground
     valid_pxs = ~np.isnan(zz.ravel())
-    
+
     newz = interpolate.griddata(
         (xx.ravel()[valid_pxs], yy.ravel()[valid_pxs]),
         zz.ravel()[valid_pxs],
@@ -529,14 +575,12 @@ def get_bground(
     # # interpolate nans and filter
     for _med in median_kernels:
         bground = cv2.medianBlur(bground, _med)
-        
+
     return bground
 
 
 def pixel_format_to_np_dtype(pixel_format: str):
-
     if pixel_format == "Coord3D_C16":
         np_dtype = np.dtype("<u2")
-    
+
     return np_dtype
-    
