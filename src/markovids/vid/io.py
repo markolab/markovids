@@ -7,6 +7,76 @@ import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
 
+class RawFileReader:
+    def __init__(self, filepath, frame_size=(640,480), dtype=np.dtype("<u2"), shape=None, intrinsic_matrix=None, distortion_coeffs=None):
+        self.dtype = dtype
+        self.filepath = filepath
+        self.frame_size = frame_size
+        self.npixels = np.prod(self.frame_size)
+        self.distortion_coeffs= distortion_coeffs
+        self.intrinsics_matrix = intrinsic_matrix
+        self.get_file_info()
+    
+    def open(self):
+        self.file_object = open(self.filepath, "rb")
+        # self.mmap_obj = np.memmap(self.filepath, dtype=self.dtype, mode="r", offset=0, shape=self.dims)
+    
+    def get_frames(self, frame_range=None):
+        skip_read = False
+        if frame_range is None:
+            # if frames is None load everything
+            seek_point = 0
+            read_points = self.nframes
+            dims = (self.nframes, self.frame_size[1], self.frame_size[0])
+        elif isinstance(frame_range, tuple):
+            # if it's a tuple, assume it's left_edge, right_edge, turn into range
+            seek_point = frame_range[0] * self.bytes_per_frame
+            read_points = frame_range[1] * self.npixels
+            dims = ((frame_range[1] - frame_range[0]) + 1, self.frame_size[1], self.frame_size[0])
+        elif isinstance(frame_range, int):
+            seek_point = frame_range * self.bytes_per_frame
+            read_points = self.npixels
+            dims = (self.frame_size[1], self.frame_size[0])
+        elif isinstance(frame_range, range):
+            _tmp = list(frame_range)
+            seek_point = _tmp[0] * self.bytes_per_frame
+            read_points = ((_tmp[-1] - _tmp[0]) + 1) * self.npixels
+            dims = ((_tmp[-1] - _tmp[0]) + 1, self.frame_size[1], self.frame_size[0])
+            # run through each element in the list
+        elif isinstance(frame_range, list):
+            nframes = len(frame_range)
+            dat = np.zeros((nframes, self.frame_size[1], self.frame_size[0]), dtype=self.dtype)
+            for i, _frame in enumerate(frame_range):
+                dat[i] = self.get_frames(_frame) 
+            skip_read = True
+        else:
+            raise RuntimeError("Did not understand frame range type")
+    
+        if not skip_read:
+            self.file_object.seek(int(seek_point))
+            dat = np.fromfile(file=self.file_object, dtype=self.dtype, count=read_points).reshape(dims)
+
+        return dat
+    
+
+    def close(self):
+        self.file_object.close()
+    
+        
+    def undistort_frames(self, frames):
+        if (self.intrinsic_matrix is not None) and (self.distortion_coeffs is not None):
+            for i, _frame in tqdm(enumerate(frames), total=len(frames), desc="Removing frame distortion", disable=not progress_bar):
+                frames[i] = cv2.undistort(_frame, self.intrinsic_matrix, self.distortion_coeffs)
+        return frames
+            
+        
+    def get_file_info(self):
+        self.total_bytes = os.stat(self.filepath).st_size
+        self.bytes_per_frame = np.prod(self.frame_size) * self.dtype.itemsize
+        self.nframes = int(os.stat(self.filepath).st_size / self.bytes_per_frame)
+        self.dims = (self.nframes, self.frame_size[1], self.frame_size[0])
+
+
 # simple command to pipe frames to an ffv1 file
 def write_frames(filename, frames, threads=6, fps=30,
                  pixel_format='gray16le', codec='ffv1', close_pipe=True,
@@ -101,24 +171,28 @@ def read_frames_raw(
         frames = (0, nframes)
         use_range = range(*frames)
         offset = 0
+        dims = (nframes, frame_size[1], frame_size[0])
     elif isinstance(frames, tuple):
         # if it's a tuple, assume it's left_edge, right_edge, turn into range
         left_edge, right_edge = frames
         offset = left_edge * vid_info["bytes_per_frame"]
         use_range = range(0, min((right_edge - left_edge) + 1, nframes))
+        dims = (nframes - left_edge, frame_size[1], frame_size[0])
     elif isinstance(frames, range):
         # range and tuples are contiguous
         left_edge, right_edge = list(frames)[0], list(frames)[-1]
         offset = left_edge * vid_info["bytes_per_frame"]
         use_range = range(0, min((right_edge - left_edge) + 1, nframes))
+        dims = (nframes - left_edge, frame_size[1], frame_size[0])
     elif isinstance(frames, list):
         # a list is NOT contiguous, simply pass it to the memmap
         use_range = frames
         offset = 0
+        dims = (nframes, frame_size[1], frame_size[0])
     else:
         raise RuntimeError("Did not understand frame argument")
 
-    dims = (nframes, frame_size[1], frame_size[0])
+    print(dims)
     if isinstance(filename, np.memmap):
         mmap_obj = filename
     else:
