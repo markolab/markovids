@@ -13,7 +13,6 @@ class RawFileReader:
         filepath,
         frame_size=(640, 480),
         dtype=np.dtype("<u2"),
-        shape=None,
         intrinsic_matrix=None,
         distortion_coeffs=None,
     ):
@@ -27,7 +26,6 @@ class RawFileReader:
 
     def open(self):
         self.file_object = open(self.filepath, "rb")
-        # self.mmap_obj = np.memmap(self.filepath, dtype=self.dtype, mode="r", offset=0, shape=self.dims)
 
     def get_frames(self, frame_range=None):
         skip_read = False
@@ -87,6 +85,144 @@ class RawFileReader:
         self.bytes_per_frame = np.prod(self.frame_size) * self.dtype.itemsize
         self.nframes = int(os.stat(self.filepath).st_size / self.bytes_per_frame)
         self.dims = (self.nframes, self.frame_size[1], self.frame_size[0])
+
+
+class AviReader:
+    def __init__(
+        self,
+        filepath,
+        threads=6,
+        slices=24,
+        slicecrc=1,
+        dtype=np.dtype("uint16"),
+        intrinsic_matrix=None,
+        distortion_coeffs=None,
+    ):
+        self.filepath = filepath
+        self.threads = threads
+        self.slices = slices
+        self.slicecrc = slicecrc
+        self.dtype = dtype
+        self.intrinsic_matrix = intrinsic_matrix
+        self.distortion_coeffs = distortion_coeffs
+        self.get_file_info()
+
+    def open(self):
+        pass
+
+    def close(self):
+        pass
+
+    def get_file_info(self):
+        command = [
+            "ffprobe",
+            "-v",
+            "fatal",
+            "-show_entries",
+            "stream=width,height,pix_fmt,r_frame_rate,bits_per_raw_sample,nb_frames",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            self.filepath,
+            "-sexagesimal",
+        ]
+
+        ffmpeg = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        out, err = ffmpeg.communicate()
+
+        if err:
+            print(err)
+        out = out.decode().split("\n")
+        self.frame_size = (int(out[0]), int(out[1]))
+        self.pixel_format = out[2]
+        self.fps = float(out[3].split("/")[0]) / float(out[3].split("/")[1])
+        self.bit_depth = int(out[4])
+        self.nframes = int(out[5])
+
+    def undistort_frames(self, frames, progress_bar=True):
+        if (self.intrinsic_matrix is not None) and (self.distortion_coeffs is not None):
+            for i, _frame in tqdm(
+                enumerate(frames),
+                total=len(frames),
+                desc="Removing frame distortion",
+                disable=not progress_bar,
+            ):
+                frames[i] = cv2.undistort(_frame, self.intrinsic_matrix, self.distortion_coeffs)
+        return frames
+
+    def get_frames(self, frame_range=None):
+        import datetime
+
+        if not frame_range:
+            use_frames = np.arange(self.nframes).astype("int16")
+            frame_select = [
+                "-ss",
+                str(datetime.timedelta(seconds=use_frames[0] / self.fps)),
+                "-vframes",
+                str(len(use_frames)),
+            ]
+        elif isinstance(frame_range, range):
+            frame_select = [
+                "-ss",
+                str(datetime.timedelta(seconds=list(frame_range)[0] / self.fps)),
+                "-vframes",
+                str(len(frame_range)),
+            ]
+        elif isinstance(frame_range, list):
+            list_string = "+".join([f"eq(n\,{_frame})" for _frame in frame_range])
+            # list_string = 'eq(n\,1)'
+            frame_select = [
+                "-vf",
+                f"select={list_string}",
+                "-vsync",
+                "0",
+                "-vframes",
+                str(len(frame_range)),
+            ]
+        elif isinstance(frame_range, int):
+            frame_select = [
+                "-ss",
+                str(datetime.timedelta(seconds=frame_range / self.fps)),
+                "-vframes",
+                "1",
+            ]
+        else:
+            raise RuntimeError("Did not understand frame range")
+
+        command = (
+            ["ffmpeg", "-loglevel", "fatal", "-i", self.filepath]
+            + frame_select
+            + [
+                "-f",
+                "image2pipe",
+                "-s",
+                "{:d}x{:d}".format(*self.frame_size),
+                "-pix_fmt",
+                self.pixel_format,
+                "-threads",
+                str(self.threads),
+                "-slices",
+                str(self.slices),
+                "-slicecrc",
+                str(self.slicecrc),
+                "-vcodec",
+                "rawvideo",
+                "-",
+            ]
+        )
+
+        pipe = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        out, err = pipe.communicate()
+        if err:
+            print("error", err)
+            return None
+
+        total_bytes = len(out)
+        bytes_per_frame = (self.bit_depth / 8) * np.prod(self.frame_size)
+        n_out_frames = int(total_bytes / bytes_per_frame)
+        dat = np.frombuffer(out, dtype=self.dtype).reshape(
+            (n_out_frames, self.frame_size[1], self.frame_size[0])
+        )
+        return dat
 
 
 # simple command to pipe frames to an ffv1 file
@@ -161,88 +297,6 @@ def write_frames(
         return pipe
 
 
-def get_raw_info(filename, dtype=np.dtype("<u2"), frame_size=(512, 424)):
-    if isinstance(filename, np.memmap):
-        dtype = filename.dtype
-        total_bytes = np.prod(filename.shape) * dtype.itemsize
-        frame_size = filename.shape[1:]
-        bytes_per_frame = frame_size[0] * frame_size[1] * dtype.itemsize
-        nframes = len(filename)
-    else:
-        total_bytes = os.stat(filename).st_size
-        bytes_per_frame = frame_size[0] * frame_size[1] * dtype.itemsize
-        nframes = int(os.stat(filename).st_size / bytes_per_frame)
-
-    file_info = {
-        "bytes": total_bytes,
-        "nframes": nframes,
-        "dims": frame_size,
-        "bytes_per_frame": bytes_per_frame,
-    }
-    return file_info
-
-
-def read_frames_raw(
-    filename,
-    frames=None,
-    frame_size=(512, 424),
-    dtype=np.dtype("<u2"),
-    intrinsic_matrix=None,
-    distortion_coeffs=None,
-    progress_bar=True,
-    **kwargs,
-):
-    # TODO, if any frame indices are a nan or less than 0, save to insert into array...
-
-    vid_info = get_raw_info(filename, frame_size=frame_size, dtype=dtype)
-    if vid_info["dims"] != frame_size:
-        frame_size = vid_info["dims"]
-    nframes = vid_info["nframes"]
-
-    if frames is None:
-        # if frames is None load everything
-        frames = (0, nframes)
-        use_range = range(*frames)
-        offset = 0
-        dims = (nframes, frame_size[1], frame_size[0])
-    elif isinstance(frames, tuple):
-        # if it's a tuple, assume it's left_edge, right_edge, turn into range
-        left_edge, right_edge = frames
-        offset = left_edge * vid_info["bytes_per_frame"]
-        use_range = range(0, min((right_edge - left_edge) + 1, nframes))
-        dims = (nframes - left_edge, frame_size[1], frame_size[0])
-    elif isinstance(frames, range):
-        # range and tuples are contiguous
-        left_edge, right_edge = list(frames)[0], list(frames)[-1]
-        offset = left_edge * vid_info["bytes_per_frame"]
-        use_range = range(0, min((right_edge - left_edge) + 1, nframes))
-        dims = (nframes - left_edge, frame_size[1], frame_size[0])
-    elif isinstance(frames, list):
-        # a list is NOT contiguous, simply pass it to the memmap
-        use_range = frames
-        offset = 0
-        dims = (nframes, frame_size[1], frame_size[0])
-    else:
-        raise RuntimeError("Did not understand frame argument")
-
-    if isinstance(filename, np.memmap):
-        mmap_obj = filename
-    else:
-        mmap_obj = np.memmap(filename, dtype=dtype, mode="r", offset=offset, shape=dims)
-    chunk = mmap_obj[use_range]
-
-    if (intrinsic_matrix is not None) and (distortion_coeffs is not None):
-        for i, _frame in tqdm(
-            enumerate(chunk),
-            total=len(chunk),
-            desc="Removing frame distortion",
-            disable=not progress_bar,
-        ):
-            chunk[i] = cv2.undistort(_frame, intrinsic_matrix, distortion_coeffs)
-
-    return chunk
-
-
 default_config = {"dtype": np.dtype("<u2"), "frame_size": (640, 480)}
 
 
@@ -259,14 +313,24 @@ def read_frames_multicam(
     # make sure we support inflating frames with nans...
     dat = {}
     for _cam, _path in paths.items():
+
         try:
             use_config = config[_cam]
             use_config = use_config | default_config
         except KeyError:
             use_config = default_config
-        dat[_cam] = read_frames_raw(
-            _path, frames=frames[_cam], progress_bar=progress_bar, **use_config
-        )
+        ext = os.path.splitext(_path)[1]
+
+        if ext == ".avi":
+            reader = AviReader(_path, **use_config)
+        elif ext == ".dat":
+            reader = RawFileReader(_path, **use_config)
+
+        _dat = reader.open()
+        _dat = reader.get_frames(frames[_cam])
+        _dat = reader.undistort_frames(_dat)
+        dat[_cam] = _dat
+        reader.close()
 
     return dat
 
@@ -548,12 +612,19 @@ def get_bground(
 ):
     from scipy import interpolate
 
-    vid_inf = get_raw_info(dat_path, dtype=dtype, frame_size=frame_size)
-    use_frames = list(range(0, vid_inf["nframes"], spacing))
-    bground_frames = read_frames_raw(
-        dat_path, frames=use_frames, dtype=dtype, frame_size=frame_size, **kwargs
-    ).astype("float32")
-    nframes, height, width = bground_frames.shape
+    ext = os.path.splitext(dat_path)
+    if ext == ".avi":
+        reader = AviReader(dat_path, frame_size=frame_size, dtype=dtype)
+    elif ext == ".dat":
+        reader = RawFileReader(dat_path, frame_size=frame_size, dtype=dtype)
+    else:
+        raise RuntimeError(f"Did not understand extension {ext}")
+    reader.open()
+    use_frames = list(range(0, reader.nframes, spacing))
+    bground_frames = reader.get_frames(use_frames).astype("float32")
+    bground_frames = reader.undistort_frames(bground_frames)
+    reader.close()
+    
     bground_frames[bground_frames < valid_range[0]] = np.nan
     bground_frames[bground_frames > valid_range[1]] = np.nan
     bground = agg_func(bground_frames, axis=0)
