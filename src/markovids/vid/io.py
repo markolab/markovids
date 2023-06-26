@@ -123,15 +123,18 @@ class RawFileReader:
             dims = (self.nframes, self.frame_size[1], self.frame_size[0])
         elif isinstance(frame_range, tuple):
             # if it's a tuple, assume it's left_edge, right_edge, turn into range
-            seek_point = frame_range[0] * self.bytes_per_frame
-            read_points = frame_range[1] * self.npixels
-            dims = ((frame_range[1] - frame_range[0]) + 1, self.frame_size[1], self.frame_size[0])
+            use_range = frame_range
+            use_range[1] = min(use_range[1], self.nframes)
+            seek_point = use_range[0] * self.bytes_per_frame
+            read_points = use_range[1] * self.npixels
+            dims = ((use_range[1] - use_range[0]) + 1, self.frame_size[1], self.frame_size[0])
         elif isinstance(frame_range, (int, np.integer)):
             seek_point = frame_range * self.bytes_per_frame
             read_points = self.npixels
             dims = (self.frame_size[1], self.frame_size[0])
         elif isinstance(frame_range, range):
             _tmp = list(frame_range)
+            _tmp = _tmp[_tmp<self.nframes]
             seek_point = _tmp[0] * self.bytes_per_frame
             read_points = ((_tmp[-1] - _tmp[0]) + 1) * self.npixels
             dims = ((_tmp[-1] - _tmp[0]) + 1, self.frame_size[1], self.frame_size[0])
@@ -139,7 +142,7 @@ class RawFileReader:
         elif isinstance(frame_range, (list, np.ndarray)):
             nframes = len(frame_range)
             dat = np.zeros((nframes, self.frame_size[1], self.frame_size[0]), dtype=self.dtype)
-            for i, _frame in enumerate(frame_range):
+            for i, _frame in enumerate(frame_range[frame_range<self.nframes]):
                 dat[i] = self.get_frames(_frame)
             skip_read = True
         else:
@@ -248,16 +251,20 @@ class AviReader:
                 str(len(use_frames)),
             ]
         elif isinstance(frame_range, range):
+            use_frame_range = list(frame_range)
+            use_frame_range = use_frame_range[use_frame_range<self.nframes]
             frame_select = [
                 "-ss",
-                str(datetime.timedelta(seconds=list(frame_range)[0] / self.fps)),
+                str(datetime.timedelta(seconds=use_frame_range[0] / self.fps)),
                 "-vframes",
-                str(len(frame_range)),
+                str(len(use_frame_range)),
             ]
         elif isinstance(frame_range, (list, np.ndarray)):
             # NEED TO REORDER USING THE LIST ORDER
-            list_order = np.argsort(np.argsort(frame_range))
-            list_string = "+".join([f"eq(n\,{_frame})" for _frame in frame_range])
+            use_frame_range = frame_range
+            use_frame_range = use_frame_range[use_frame_range<self.nframes]
+            list_order = np.argsort(np.argsort(use_frame_range))
+            list_string = "+".join([f"eq(n\,{_frame})" for _frame in use_frame_range])
             # list_string = 'eq(n\,1)'
             frame_select = [
                 "-vf",
@@ -265,7 +272,7 @@ class AviReader:
                 "-vsync",
                 "0",
                 "-vframes",
-                str(len(frame_range)),
+                str(len(use_frame_range)),
             ]
         elif isinstance(frame_range, int):
             frame_select = [
