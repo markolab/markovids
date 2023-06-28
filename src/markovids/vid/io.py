@@ -133,7 +133,7 @@ class RawFileReader:
             read_points = self.npixels
             dims = (self.frame_size[1], self.frame_size[0])
         elif isinstance(frame_range, range):
-            _tmp = list(frame_range)
+            _tmp = np.asarray(list(frame_range))
             _tmp = _tmp[_tmp<self.nframes]
             seek_point = _tmp[0] * self.bytes_per_frame
             read_points = ((_tmp[-1] - _tmp[0]) + 1) * self.npixels
@@ -252,7 +252,7 @@ class AviReader:
                 str(len(use_frames)),
             ]
         elif isinstance(frame_range, range):
-            use_frame_range = list(frame_range)
+            use_frame_range = np.asarray(list(frame_range))
             use_frame_range = use_frame_range[use_frame_range<self.nframes]
             frame_select = [
                 "-ss",
@@ -262,7 +262,7 @@ class AviReader:
             ]
         elif isinstance(frame_range, (list, np.ndarray)):
             # NEED TO REORDER USING THE LIST ORDER
-            use_frame_range = frame_range
+            use_frame_range = np.asarray(frame_range)
             use_frame_range = use_frame_range[use_frame_range<self.nframes]
             list_order = np.argsort(np.argsort(use_frame_range))
             list_string = "+".join([f"eq(n\,{_frame})" for _frame in use_frame_range])
