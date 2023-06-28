@@ -140,6 +140,7 @@ class RawFileReader:
             dims = ((_tmp[-1] - _tmp[0]) + 1, self.frame_size[1], self.frame_size[0])
             # run through each element in the list
         elif isinstance(frame_range, (list, np.ndarray)):
+            frame_range = np.asarray(frame_range)
             nframes = len(frame_range)
             dat = np.zeros((nframes, self.frame_size[1], self.frame_size[0]), dtype=self.dtype)
             for i, _frame in enumerate(frame_range[frame_range<self.nframes]):
