@@ -11,6 +11,7 @@ dependencies = [
 	"open3d",
 	"opencv-python-headless",
 	"numpy",
+	"scikit-image",
 	"tqdm",
 ]
 

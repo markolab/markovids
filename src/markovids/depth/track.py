@@ -78,7 +78,7 @@ def get_roi(
         if gradient_kernel is not None:
             gradient_x = np.abs(cv2.Sobel(proc_frame, cv2.CV_32F, 1, 0, ksize=gradient_kernel))
             gradient_y = np.abs(cv2.Sobel(proc_frame, cv2.CV_32F, 0, 1, ksize=gradient_kernel))
-            proc_frame = (gradient_x + gradient_y) / 2.
+            proc_frame = (gradient_x + gradient_y) / 2.0
 
         proc_frame = np.logical_and(
             proc_frame > depth_range[0], proc_frame < depth_range[1]
@@ -100,15 +100,31 @@ def get_roi(
     return results
 
 
-default_strels = {cv2.MORPH_DILATE: cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))}
+default_pre_strels = {cv2.MORPH_DILATE: cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))}
+# default_post_strels = {cv2.MORPH_ERODE: cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))}
+default_post_strels = {}
 
 
-def clean_roi(dat, strels=default_strels):
+def clean_roi(
+    dat,
+    pre_strels=default_pre_strels,
+    post_strels=default_post_strels,
+    fill_holes=True,
+    use_cc=True,
+):
     # assumes we've received a binary mask
     results = np.zeros(dat.shape, dtype="bool")
     for i, _frame in tqdm(enumerate(dat), total=len(dat), desc="Cleaning mask"):
         new_frame = _frame.copy().astype("uint8")
-        for k, v in strels.items():
+        for k, v in pre_strels.items():
             new_frame = cv2.morphologyEx(new_frame, k, v)
-            results[i] = new_frame != 0
+        if fill_holes:
+            new_frame = binary_fill_holes(new_frame)
+        if new_frame.sum() == 0:
+            continue
+        if use_cc:
+            new_frame = get_largest_cc(new_frame)
+        for k, v in post_strels.items():
+            new_frame = cv2.morphologyEx(new_frame.astype("uint8"), k, v)
+        results[i] = new_frame != 0
     return results

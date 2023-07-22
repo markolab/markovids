@@ -191,7 +191,8 @@ def depth_from_pcl_interpolate(
         new_depth_image = griddata(
             (u, v), z, (xx, yy), method=interpolation_method, fill_value=fill_value
         )
-    except:
+    except Exception as e:
+        print(e)
         return depth_image
     
     # print(f"Step 3 {time.process_time() - tic}")
@@ -200,11 +201,9 @@ def depth_from_pcl_interpolate(
     # https://stackoverflow.com/questions/30655749/how-to-set-a-maximum-distance-between-points-for-interpolation-when-using-scipydepth_image =
     tree = cKDTree(np.vstack([u, v]).T)  # feed this in from elsewhere...
     xi = _ndim_coords_from_arrays((xx, yy))  # can also precook this...
-    dists, indexes = tree.query(xi)
-    
+    dists, indexes = tree.query(xi) 
     # print(f"Step 4 {time.process_time() - tic}")
     # tic = time.process_time()
-    
 #     # Copy original result but mask missing values with NaNs
     new_depth_image[dists > distance_threshold] = np.nan 
     depth_image[min_y:max_y, min_x:max_x] = new_depth_image

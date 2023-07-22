@@ -8,7 +8,6 @@ default_criteria = o3d.pipelines.registration.ICPConvergenceCriteria(
     relative_fitness=1e-6, relative_rmse=1e-6, max_iteration=int(1e3)
 )
 
-
 default_estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint(
 )
 
@@ -53,12 +52,17 @@ def pairwise_registration(
     return dct
 
 
+default_opt = o3d.pipelines.registration.GlobalOptimizationConvergenceCriteria()
+default_opt.max_iteration = 1000
+default_opt.max_iteration_lm = 100
+
 def optimize_pose_graph(
     pose_graph: o3d.pipelines.registration.PoseGraph,
     max_correspondence_distance: float = 0.005,
     edge_prune_threshold: float = 0.25,
     preference_loop_closure: float = 0.1,
     reference_node: int = 0,
+    criteria: o3d.pipelines.registration.GlobalOptimizationConvergenceCriteria = default_opt
 ):
     option = o3d.pipelines.registration.GlobalOptimizationOption(
         max_correspondence_distance=max_correspondence_distance,
@@ -70,6 +74,6 @@ def optimize_pose_graph(
         o3d.pipelines.registration.global_optimization(
             pose_graph,
             o3d.pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
-            o3d.pipelines.registration.GlobalOptimizationConvergenceCriteria(),
+            default_opt,
             option,
         )

@@ -5,6 +5,133 @@ import cv2
 import pandas as pd
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
+from typing import Optional
+
+
+class MP4WriterPreview:
+    def __init__(
+        self,
+        filepath,
+        frame_size=(640, 480),
+        fps=100,
+        pixel_format="yuv420p",
+        codec="h264",
+        threads=6,
+        slices=25,
+        slicecrc=1,
+        crf=28,
+        cmap="turbo",
+        font=cv2.FONT_HERSHEY_SIMPLEX,
+        txt_pos=(30, 30),
+    ):
+        ext = os.path.splitext(filepath)[1]
+        if ext != ".mp4":
+            raise RuntimeError("Must use mp4 container (extension must be mp4)")
+        self.filepath = filepath
+        self.fps = fps
+        self.pixel_format = pixel_format
+        self.codec = codec
+        self.threads = threads
+        self.slices = slices
+        self.slicecrc = slicecrc
+        self.frame_size = frame_size
+        self.pipe = None
+        self.crf = crf
+        self.cmap = plt.get_cmap(cmap)  # only used for intensity images
+        self.txt_pos = txt_pos
+        self.font = font
+
+    def open(self):
+        command = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "fatal",
+            "-framerate",
+            str(self.fps),
+            "-f",
+            "rawvideo",
+            "-s",
+            "{:d}x{:d}".format(*self.frame_size),
+            "-pix_fmt",
+            self.pixel_format,
+            "-i",
+            "-",
+            "-an",
+            "-vcodec",
+            self.codec,
+            "-threads",
+            str(self.threads),
+            "-slices",
+            str(self.slices),
+            "-slicecrc",
+            str(self.slicecrc),
+            "-crf",
+            str(self.crf),
+            "-r",
+            str(self.fps),
+            self.filepath,
+        ]
+
+        self.pipe = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+
+    def pseudocolor_frames(self, frames, vmin=0, vmax=100):
+        pseudo_ims = np.zeros(
+            (len(frames), int(self.frame_size[1] * 1.5), self.frame_size[0]), dtype="uint8"
+        )
+        for i, _img in enumerate(frames):
+            disp_img = _img.copy().astype("float32")
+            disp_img = (disp_img - vmin) / (vmax - vmin)
+            disp_img[disp_img < 0] = 0
+            disp_img[disp_img > 1] = 1
+            disp_img = np.delete(self.cmap(disp_img), 3, 2) * 255
+            disp_img = cv2.cvtColor(disp_img.astype("uint8"), cv2.COLOR_RGB2YUV_I420)
+            pseudo_ims[i] = disp_img
+        return pseudo_ims
+
+    def inscribe_frame_number(self, frame, idx):
+        cv2.putText(
+            frame,
+            str(idx),
+            self.txt_pos,
+            self.font,
+            1,
+            255,
+            2,
+            cv2.LINE_AA,
+        )
+
+    def write_frames(
+        self, frames, frames_idx=None, progress_bar=True, vmin=0, vmax=100,
+    ):  # may need to enforce endianness...
+        if self.pipe is None:
+            self.open()
+
+        if frames_idx is None:
+            frames_idx = range(len(frames))
+
+        assert len(frames) == len(frames_idx)
+
+        if frames.ndim == 3:
+            write_frames = self.pseudocolor_frames(frames, vmin=vmin, vmax=vmax)
+        elif frames.ndim == 4:
+            write_frames = frames
+        else:
+            raise RuntimeError("Wrong number of dims in frame data")
+
+        for _idx, _frame in tqdm(
+            zip(frames_idx, write_frames), total=len(frames), disable=not progress_bar
+        ):
+            _tmp_frame = _frame.copy()
+            self.inscribe_frame_number(_tmp_frame, _idx)
+            self.pipe.stdin.write(_tmp_frame.tobytes())
+
+    def close(self):
+        self.pipe.stdin.close()
+        self.pipe.wait()
+        return None
 
 
 class AviWriter:
@@ -107,6 +234,7 @@ class RawFileReader:
         self.distortion_coeffs = distortion_coeffs
         self.intrinsic_matrix = intrinsic_matrix
         self.file_object = None
+        self.downsample = None
         self.get_file_info()
 
     def open(self):
@@ -324,76 +452,17 @@ class AviReader:
         return dat
 
 
-# simple command to pipe frames to an ffv1 file
-def write_frames(
-    filename,
-    frames,
-    threads=6,
-    fps=30,
-    pixel_format="gray16le",
-    codec="ffv1",
-    close_pipe=True,
-    pipe=None,
-    slices=24,
-    slicecrc=1,
-    frame_size=None,
-    get_cmd=False,
-):
-    """
-    Write frames to avi file using the ffv1 lossless encoder
-    """
-
-    # we probably want to include a warning about multiples of 32 for videos
-    # (then we can use pyav and some speedier tools)
-
-    if not frame_size and type(frames) is np.ndarray:
-        frame_size = "{0:d}x{1:d}".format(frames.shape[2], frames.shape[1])
-    elif not frame_size and type(frames) is tuple:
-        frame_size = "{0:d}x{1:d}".format(frames[0], frames[1])
-
-    command = [
-        "ffmpeg",
-        "-y",
-        "-loglevel",
-        "fatal",
-        "-framerate",
-        str(fps),
-        "-f",
-        "rawvideo",
-        "-s",
-        frame_size,
-        "-pix_fmt",
-        pixel_format,
-        "-i",
-        "-",
-        "-an",
-        "-vcodec",
-        codec,
-        "-threads",
-        str(threads),
-        "-slices",
-        str(slices),
-        "-slicecrc",
-        str(slicecrc),
-        "-r",
-        str(fps),
-        filename,
-    ]
-
-    if get_cmd:
-        return command
-
-    if not pipe:
-        pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-
-    for i in tqdm.tqdm(range(frames.shape[0])):
-        pipe.stdin.write(frames[i, ...].astype("uint16").tostring())
-
-    if close_pipe:
-        pipe.stdin.close()
-        return None
-    else:
-        return pipe
+def downsample_frames(frames, downsample=4):
+    # short circuit
+    if downsample == 1:
+        return frames
+    nframes, height, width = frames.shape[:3]
+    ds_frames = np.zeros(
+        (nframes, height // downsample, width // downsample), dtype=frames.dtype
+    )
+    for i in range(len(frames)):
+        ds_frames[i] = cv2.resize(frames[i], ds_frames.shape[1:][::-1])
+    return ds_frames
 
 
 default_config = {"dtype": np.dtype("<u2"), "frame_size": (640, 480)}
@@ -405,17 +474,17 @@ def read_frames_multicam(
     config: dict = {},
     tick_period: float = 1e9,
     progress_bar: bool = True,
+    downsample: Optional[int] = None,
 ):
     # config should contain frame_size and numpy data type
     # PATHs should be dictionary where camera is key...
     # CONFIGs should be dictionary where camera is key...
     # make sure we support inflating frames with nans...
     dat = {}
-    for _cam, _path in paths.items():
+    for _path, _cam in paths.items():
 
         try:
-            use_config = config[_cam]
-            use_config = use_config | default_config
+            use_config = default_config | config[_cam]
         except KeyError:
             use_config = default_config
         ext = os.path.splitext(_path)[1]
@@ -424,22 +493,26 @@ def read_frames_multicam(
         _dat = reader.open()
         _dat = reader.get_frames(frames[_cam])
         _dat = reader.undistort_frames(_dat)
+
+        if downsample is not None:
+            _dat = downsample_frames(_dat, downsample)
+
         dat[_cam] = _dat
         reader.close()
 
     return dat
 
 
-def fill_timestamps(timestamps, use_timestamp_field="device_timestamp", period=0.01):
+def fill_timestamps(timestamps, use_timestamp_field="device_timestamp", capture_number="frame_id", period=0.01):
     # TODO: add timestamp check as well, not just capture number
-    capture_diff = timestamps["capture_number"].diff()
+    capture_diff = timestamps[capture_number].diff()
     gaps = capture_diff > 1
     nmissing_frames = capture_diff[gaps] - 1
 
     new_timestamps = timestamps.copy()
     new_timestamps.index.name = "frame_index"
     # new_timestamps["is_pad"] = False
-    new_timestamps = new_timestamps.reset_index().set_index("capture_number")[
+    new_timestamps = new_timestamps.reset_index().set_index(capture_number)[
         ["frame_index", use_timestamp_field]
     ]
 
@@ -448,7 +521,7 @@ def fill_timestamps(timestamps, use_timestamp_field="device_timestamp", period=0
     to_insert_array_loc = []
     for _index, _n_missing in nmissing_frames.items():
         new_idx = np.arange(-_n_missing, 0)
-        cap_number = timestamps.loc[_index]["capture_number"]
+        cap_number = timestamps.loc[_index][capture_number]
         last_good_value = new_timestamps.loc[cap_number, use_timestamp_field]
         to_insert_index += (cap_number + new_idx).tolist()
         to_insert_values += (last_good_value + new_idx * period).tolist()
@@ -459,9 +532,10 @@ def fill_timestamps(timestamps, use_timestamp_field="device_timestamp", period=0
         use_timestamp_field: to_insert_values,
     }
     insert_df = pd.DataFrame(to_insert_values, index=to_insert_index)
-    insert_df.index.name = "capture_number"
+    insert_df.index.name = capture_number
     new_timestamps = pd.concat([new_timestamps, insert_df]).sort_index()
-    new_timestamps.index = range(len(new_timestamps))  # should be contiguous anyhow...
+    new_timestamps.index = new_timestamps.index.astype("int")
+    # new_timestamps.index = range(len(new_timestamps))  # should be contiguous anyhow...
     new_timestamps["frame_index"] = new_timestamps["frame_index"].astype("Int32")
 
     return new_timestamps
@@ -474,6 +548,10 @@ def read_timestamps(path, tick_period=1e9, fill=False, fill_kwargs={}):
         buffer = io.StringIO("\n".join(line.strip() for line in table))
         df = pd.read_table(buffer, delimiter="\t")
     df.index.name = "frame_index"
+    try:
+        df["frame_id"] = df["frame_id"].astype("int")
+    except KeyError:
+        pass
     df["system_timestamp"] /= tick_period
     df["device_timestamp"] /= tick_period
     df = df.sort_index()
@@ -487,11 +565,10 @@ def read_timestamps_multicam(
 ):
     from functools import reduce
 
-    cameras = list(path.keys())
     ts = {}
-    for _cam in cameras:
+    for _path, _cam in path.items():
         ts[_cam] = read_timestamps(
-            path[_cam],
+            _path,
             fill=fill,
             fill_kwargs={"use_timestamp_field": use_timestamp_field},
         ).rename(columns={"frame_index": _cam})
@@ -505,194 +582,9 @@ def read_timestamps_multicam(
         ),
         ts.values(),
     )
+    merged_ts.index = list(ts.values())[0].index
+
     return ts, merged_ts
-
-
-def write_frames_preview(
-    filename,
-    frames=np.empty((0,)),
-    threads=6,
-    fps=30,
-    pixel_format="yuv420p",
-    # pixel_format="rgb24",
-    codec="h264",
-    slices=24,
-    slicecrc=1,
-    frame_size=None,
-    depth_min=0,
-    depth_max=80,
-    get_cmd=False,
-    cmap="turbo",
-    pipe=None,
-    close_pipe=True,
-    frame_range=None,
-    crf=28,
-    progress_bar=False,
-):
-    """
-    Simple command to pipe frames to an ffv1 file.
-    Writes out a false-colored mp4 video.
-    Parameters
-    ----------
-    filename (str): path to file to write to.
-    frames (np.ndarray): frames to write
-    threads (int): number of threads to write video
-    fps (int): frames per second
-    pixel_format (str): format video color scheme
-    codec (str): ffmpeg encoding-writer method to use
-    slices (int): number of frame slices to write at a time.
-    slicecrc (int): check integrity of slices
-    frame_size (tuple): shape/dimensions of image.
-    depth_min (int): minimum mouse depth from floor in (mm)
-    depth_max (int): maximum mouse depth from floor in (mm)
-    get_cmd (bool): indicates whether function should return ffmpeg command (instead of executing)
-    cmap (str): color map to use.
-    pipe (subProcess.Pipe): pipe to currently open video file.
-    close_pipe (bool): indicates to close the open pipe to video when done writing.
-    frame_range (range()): frame indices to write on video
-    progress_bar (bool): If True, displays a TQDM progress bar for the video writing progress.
-    Returns
-    -------
-    pipe (subProcess.Pipe): indicates whether video writing is complete.
-    """
-
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    # white = (255, 255,  255)
-    txt_pos = (30, 30)
-
-    if not np.mod(frames.shape[1], 2) == 0:
-        frames = np.pad(frames, ((0, 0), (0, 1), (0, 0)), "constant", constant_values=0)
-
-    if not np.mod(frames.shape[2], 2) == 0:
-        frames = np.pad(frames, ((0, 0), (0, 0), (0, 1)), "constant", constant_values=0)
-
-    if not frame_size and type(frames) is np.ndarray:
-        frame_size = "{0:d}x{1:d}".format(frames.shape[2], frames.shape[1])
-    elif not frame_size and type(frames) is tuple:
-        frame_size = "{0:d}x{1:d}".format(frames[0], frames[1])
-
-    command = [
-        "ffmpeg",
-        "-y",
-        "-loglevel",
-        "fatal",
-        "-threads",
-        str(threads),
-        "-framerate",
-        str(fps),
-        "-f",
-        "rawvideo",
-        "-s",
-        frame_size,
-        "-pix_fmt",
-        pixel_format,
-        "-i",
-        "-",
-        "-an",
-        "-vcodec",
-        codec,
-        "-slices",
-        str(slices),
-        "-slicecrc",
-        str(slicecrc),
-        "-crf",
-        str(crf),
-        "-r",
-        str(fps),
-        filename,
-    ]
-
-    if get_cmd:
-        return command
-
-    if not pipe:
-        pipe = subprocess.Popen(
-            command, stdin=subprocess.PIPE, stderr=subprocess.PIPE, stdout=subprocess.PIPE
-        )
-
-    # scale frames to appropriate depth ranges
-    use_cmap = plt.get_cmap(cmap)
-    for i in tqdm(
-        range(frames.shape[0]),
-        disable=not progress_bar,
-        desc=f"Writing frames to {filename}",
-    ):
-        disp_img = frames[i, :].copy().astype("float32")
-        disp_img = (disp_img - depth_min) / (depth_max - depth_min)
-        disp_img[disp_img < 0] = 0
-        disp_img[disp_img > 1] = 1
-        disp_img = np.delete(use_cmap(disp_img), 3, 2) * 255
-        disp_img = cv2.cvtColor(disp_img.astype("uint8"), cv2.COLOR_RGB2YUV_I420)
-
-        if frame_range is not None:
-            try:
-                cv2.putText(
-                    disp_img,
-                    str(frame_range[i]),
-                    txt_pos,
-                    font,
-                    1,
-                    255,
-                    2,
-                    cv2.LINE_AA,
-                )
-            except (IndexError, ValueError):
-                # len(frame_range) M < len(frames) or
-                # txt_pos is outside of the frame dimensions
-                print("Could not overlay frame number on preview on video.")
-        try:
-            pipe.stdin.write(disp_img.astype("uint8").tobytes())
-        except BrokenPipeError:
-            return disp_img
-
-    if close_pipe:
-        pipe.communicate()
-        return None
-    else:
-        return pipe
-
-
-def make_timebase_uniform(timestamps, frames, use_timestamp_field="system_timestamp", period=0.01):
-    import pandas as pd
-
-    # TODO: add timestamp check as well, not just capture number
-    capture_diff = timestamps["capture_number"].diff()
-    gaps = capture_diff > 1
-    nmissing_frames = capture_diff[gaps] - 1
-    new_timestamps = timestamps.set_index("capture_number")[use_timestamp_field]
-
-    to_insert_index = []
-    to_insert_values = []
-    to_insert_array_loc = []
-    for _index, _n_missing in nmissing_frames.items():
-        new_idx = np.arange(-_n_missing, 0)
-        cap_number = timestamps.loc[_index]["capture_number"]
-        last_good_value = new_timestamps.loc[cap_number]
-        to_insert_index += (cap_number + new_idx).tolist()
-        to_insert_values += (last_good_value + new_idx * period).tolist()
-        to_insert_array_loc.append((new_timestamps.index.get_loc(cap_number) + 1, len(new_idx)))
-
-    insert_series = pd.Series(to_insert_values, index=to_insert_index, name=use_timestamp_field)
-    insert_series.index.name = "capture_number"
-
-    new_timestamps = pd.concat([new_timestamps, insert_series]).sort_index()
-
-    new_timestamps = new_timestamps.rename("timestamp")
-    new_timestamps.index.name = "frame_index"
-
-    new_frames = frames.copy()
-    total_frames, height, width = new_frames.shape
-
-    shift = 0
-    for _loc, _nframes in to_insert_array_loc:
-        pad_array = np.zeros((_nframes, height, width))
-        pad_array[:] = np.nan
-        new_frames = np.concatenate(
-            [new_frames[: _loc + shift], pad_array, new_frames[_loc + shift :]]
-        )
-        shift += _nframes
-
-    return new_timestamps, new_frames
 
 
 def get_bground(
@@ -703,6 +595,7 @@ def get_bground(
     agg_func=np.nanmean,
     valid_range=(1000, 2000),
     median_kernels=(3, 5),
+    interpolate_invalid=True,
     **kwargs,
 ):
     from scipy import interpolate
@@ -714,25 +607,26 @@ def get_bground(
     bground_frames = reader.get_frames(use_frames).astype("float32")
     bground_frames = reader.undistort_frames(bground_frames)
     reader.close()
-    
-    bground_frames[bground_frames < valid_range[0]] = np.nan
-    bground_frames[bground_frames > valid_range[1]] = np.nan
+
+    if valid_range is not None: 
+        bground_frames[bground_frames < valid_range[0]] = np.nan
+        bground_frames[bground_frames > valid_range[1]] = np.nan
     bground = agg_func(bground_frames, axis=0)
 
-    height, width = bground.shape
-    xx, yy = np.meshgrid(np.arange(width), np.arange(height))
-    zz = bground
-    valid_pxs = ~np.isnan(zz.ravel())
+    if valid_range is not None and interpolate_invalid:
+        height, width = bground.shape
+        xx, yy = np.meshgrid(np.arange(width), np.arange(height))
+        zz = bground
+        valid_pxs = ~np.isnan(zz.ravel())
+        newz = interpolate.griddata(
+            (xx.ravel()[valid_pxs], yy.ravel()[valid_pxs]),
+            zz.ravel()[valid_pxs],
+            (xx, yy),
+            method="nearest",
+            fill_value=np.nan,
+        )
 
-    newz = interpolate.griddata(
-        (xx.ravel()[valid_pxs], yy.ravel()[valid_pxs]),
-        zz.ravel()[valid_pxs],
-        (xx, yy),
-        method="nearest",
-        fill_value=np.nan,
-    )
-
-    bground = newz
+        bground = newz
     # # interpolate nans and filter
     for _med in median_kernels:
         bground = cv2.medianBlur(bground, _med)
@@ -743,5 +637,9 @@ def get_bground(
 def pixel_format_to_np_dtype(pixel_format: str):
     if pixel_format == "Coord3D_C16":
         np_dtype = np.dtype("<u2")
+    elif pixel_format == "Mono8":
+        np_dtype = np.dtype("<u1")
+    else:
+        raise RuntimeError("Did not understand pixel format!")
 
     return np_dtype
