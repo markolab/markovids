@@ -313,7 +313,6 @@ class AviReader:
         threads=6,
         slices=24,
         slicecrc=1,
-        dtype=np.dtype("uint16"),
         intrinsic_matrix=None,
         distortion_coeffs=None,
     ):
@@ -321,7 +320,6 @@ class AviReader:
         self.threads = threads
         self.slices = slices
         self.slicecrc = slicecrc
-        self.dtype = dtype
         self.intrinsic_matrix = intrinsic_matrix
         self.distortion_coeffs = distortion_coeffs
         self.get_file_info()
@@ -356,6 +354,13 @@ class AviReader:
         self.fps = float(out[3].split("/")[0]) / float(out[3].split("/")[1])
         self.bit_depth = int(out[4])
         self.nframes = int(out[5])
+
+        if self.bit_depth == 16:
+            self.dtype = np.dtype("<u2")
+        elif self.bit_depth == 8:
+            self.dtype = np.dtype("<u1")
+        else:
+            raise RuntimeError(f"Cannot work with bit depth {self.bit_depth}")
 
     def undistort_frames(self, frames, progress_bar=True):
         if (self.intrinsic_matrix is not None) and (self.distortion_coeffs is not None):

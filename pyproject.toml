@@ -8,13 +8,16 @@ requires-python = ">=3.7"
 version = "0.0.1"
 description = "A package for processing 2d and 3d videos"
 dependencies = [
-	"open3d",
 	"opencv-python-headless",
 	"numpy",
 	"scikit-image",
 	"tqdm",
 ]
 
+[project.optional-dependencies]
+pcl = [
+	"open3d"
+]
 
 # [tool.setuptools.packages.find]
 # where = ["src"]
