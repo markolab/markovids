@@ -10,6 +10,8 @@ description = "A package for processing 2d and 3d videos"
 dependencies = [
 	"opencv-python-headless",
 	"numpy",
+	"pandas",
+	"matplotlib",
 	"scikit-image",
 	"tqdm",
 ]
