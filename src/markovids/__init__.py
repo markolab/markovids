@@ -1,5 +1,9 @@
-import markovids.pcl.io
-import markovids.pcl.registration
+# note that these are optional...
+try:
+	import markovids.pcl.io
+	import markovids.pcl.registration
+except ModuleNotFoundError:
+	pass
 import markovids.vid.io
 # from markovids.vid.io import RawFileReader
 import markovids.depth.plane
