@@ -315,6 +315,7 @@ class AviReader:
         slicecrc=1,
         intrinsic_matrix=None,
         distortion_coeffs=None,
+        **kwargs,
     ):
         self.filepath = filepath
         self.threads = threads
@@ -556,7 +557,7 @@ def read_timestamps(path, tick_period=1e9, fill=False, fill_kwargs={}):
     try:
         df["frame_id"] = df["frame_id"].astype("int")
     except KeyError:
-        pass
+        df["frame_id"] = df["capture_number"].astype("int")
     df["system_timestamp"] /= tick_period
     df["device_timestamp"] /= tick_period
     df = df.sort_index()
