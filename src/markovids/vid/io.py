@@ -4,6 +4,7 @@ import subprocess
 import cv2
 import pandas as pd
 import matplotlib.pyplot as plt
+import toml
 from tqdm.auto import tqdm
 from typing import Optional
 
@@ -73,13 +74,14 @@ class MP4WriterPreview:
             self.filepath,
         ]
 
-        self.pipe = subprocess.Popen(
-            command, stdin=subprocess.PIPE, stderr=subprocess.STDOUT
-        )
+        self.pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     def pseudocolor_frames(self, frames, vmin=0, vmax=100):
+        # pseudo_ims = np.zeros(
+        #     (len(frames), int(self.frame_size[1] * 1.5), self.frame_size[0]), dtype="uint8"
+        # )
         pseudo_ims = np.zeros(
-            (len(frames), int(self.frame_size[1] * 1.5), self.frame_size[0]), dtype="uint8"
+            (len(frames), self.frame_size[1], self.frame_size[0], 3), dtype="uint8"
         )
         for i, _img in enumerate(frames):
             disp_img = _img.copy().astype("float32")
@@ -87,7 +89,6 @@ class MP4WriterPreview:
             disp_img[disp_img < 0] = 0
             disp_img[disp_img > 1] = 1
             disp_img = np.delete(self.cmap(disp_img), 3, 2) * 255
-            disp_img = cv2.cvtColor(disp_img.astype("uint8"), cv2.COLOR_RGB2YUV_I420)
             pseudo_ims[i] = disp_img
         return pseudo_ims
 
@@ -98,13 +99,35 @@ class MP4WriterPreview:
             self.txt_pos,
             self.font,
             1,
-            255,
+            (255,255,255),
             2,
             cv2.LINE_AA,
         )
 
+    def mark_frame(self, frame, marker_color, marker_size):
+        # bottom right for now
+        height, width, channels = frame.shape
+        x1, y1 = width, height
+        x2, y2 = int(x1 - width * marker_size), int(y1 - height * marker_size)
+
+        cv2.rectangle(
+            frame,
+            (x2, y2),
+            (x1, y1),
+            marker_color,
+            -1
+        )
+
     def write_frames(
-        self, frames, frames_idx=None, progress_bar=True, vmin=0, vmax=100,
+        self,
+        frames,
+        frames_idx=None,
+        progress_bar=True,
+        vmin=0,
+        vmax=100,
+        mark_frames=[],
+        marker_color=[0, 0, 255],
+        marker_size=.1,
     ):  # may need to enforce endianness...
         if self.pipe is None:
             self.open()
@@ -126,6 +149,9 @@ class MP4WriterPreview:
         ):
             _tmp_frame = _frame.copy()
             self.inscribe_frame_number(_tmp_frame, _idx)
+            if _idx in mark_frames:
+                self.mark_frame(_tmp_frame, marker_color, marker_size) 
+            _tmp_frame = cv2.cvtColor(_tmp_frame.astype("uint8"), cv2.COLOR_RGB2YUV_I420)
             self.pipe.stdin.write(_tmp_frame.tobytes())
 
     def close(self):
@@ -191,13 +217,9 @@ class AviWriter:
             self.filepath,
         ]
 
-        self.pipe = subprocess.Popen(
-            command, stdin=subprocess.PIPE, stderr=subprocess.STDOUT
-        )
+        self.pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
 
-    def write_frames(
-        self, frames, progress_bar=True
-    ):  # may need to enforce endianness...
+    def write_frames(self, frames, progress_bar=True):  # may need to enforce endianness...
         if self.pipe is None:
             self.open()
         for i in tqdm(range(len(frames)), disable=not progress_bar):
@@ -217,16 +239,26 @@ def AutoReader(filepath, **kwargs):
         reader = AviReader(filepath, **kwargs)
     return reader
 
-    
+
 class RawFileReader:
     def __init__(
         self,
         filepath,
-        frame_size=(640, 480),
-        dtype=np.dtype("<u2"),
+        frame_size=None,
+        dtype=None,
         intrinsic_matrix=None,
         distortion_coeffs=None,
     ):
+        # attempt to retrieve metadata
+        metadata = toml.load(os.path.dirname(filepath, "metadata.toml"))
+        cam, ext = os.path.splitext(os.path.basename(filepath))
+
+        if frame_size is None:
+            frame_size = (metadata[cam]["Width"], metadata[cam]["Height"])
+
+        if dtype is None:
+            dtype = pixel_format_to_np_dtype(metadata[cam]["PixelFormat"])
+
         self.dtype = dtype
         self.filepath = filepath
         self.frame_size = frame_size
@@ -243,7 +275,6 @@ class RawFileReader:
     def get_frames(self, frame_range=None):
         if self.file_object is None:
             self.open()
-        skip_read = False
         if frame_range is None:
             # if frames is None load everything
             seek_point = 0
@@ -262,26 +293,27 @@ class RawFileReader:
             dims = (self.frame_size[1], self.frame_size[0])
         elif isinstance(frame_range, range):
             _tmp = np.asarray(list(frame_range))
-            _tmp = _tmp[_tmp<self.nframes]
-            seek_point = _tmp[0] * self.bytes_per_frame
-            read_points = ((_tmp[-1] - _tmp[0]) + 1) * self.npixels
-            dims = ((_tmp[-1] - _tmp[0]) + 1, self.frame_size[1], self.frame_size[0])
-            # run through each element in the list
+            _tmp = _tmp[_tmp < self.nframes]
+            if frame_range.step == 1:
+                seek_point = _tmp[0] * self.bytes_per_frame
+                read_points = ((_tmp[-1] - _tmp[0]) + 1) * self.npixels
+                dims = ((_tmp[-1] - _tmp[0]) + 1, self.frame_size[1], self.frame_size[0])
+            else:
+                # if spacing is non-contiguous process as list
+                dat = self.get_frames(_tmp)
+                return dat
         elif isinstance(frame_range, (list, np.ndarray)):
             frame_range = np.asarray(frame_range)
             nframes = len(frame_range)
             dat = np.zeros((nframes, self.frame_size[1], self.frame_size[0]), dtype=self.dtype)
-            for i, _frame in enumerate(frame_range[frame_range<self.nframes]):
+            for i, _frame in enumerate(frame_range[frame_range < self.nframes]):
                 dat[i] = self.get_frames(_frame)
-            skip_read = True
+            return dat
         else:
             raise RuntimeError("Did not understand frame range type")
 
-        if not skip_read:
-            self.file_object.seek(int(seek_point))
-            dat = np.fromfile(file=self.file_object, dtype=self.dtype, count=read_points).reshape(
-                dims
-            )
+        self.file_object.seek(int(seek_point))
+        dat = np.fromfile(file=self.file_object, dtype=self.dtype, count=read_points).reshape(dims)
 
         return dat
 
@@ -306,21 +338,171 @@ class RawFileReader:
         self.dims = (self.nframes, self.frame_size[1], self.frame_size[0])
 
 
+# class AviReader:
+#     def __init__(
+#         self,
+#         filepath,
+#         threads=16,
+#         slices=24,
+#         slicecrc=1,
+#         intrinsic_matrix=None,
+#         distortion_coeffs=None,
+#         **kwargs,
+#     ):
+#         self.filepath = filepath
+#         self.threads = threads
+#         self.slices = slices
+#         self.slicecrc = slicecrc
+#         self.intrinsic_matrix = intrinsic_matrix
+#         self.distortion_coeffs = distortion_coeffs
+#         self.get_file_info()
+
+#     def open(self):
+#         pass
+
+#     def close(self):
+#         pass
+
+#     def get_file_info(self):
+#         command = [
+#             "ffprobe",
+#             "-v",
+#             "fatal",
+#             "-show_entries",
+#             "stream=width,height,pix_fmt,r_frame_rate,bits_per_raw_sample,nb_frames",
+#             "-of",
+#             "default=noprint_wrappers=1:nokey=1",
+#             self.filepath,
+#             "-sexagesimal",
+#         ]
+
+#         ffmpeg = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+#         out, err = ffmpeg.communicate()
+
+#         if err:
+#             print(err)
+#         out = out.decode().split("\n")
+#         self.frame_size = (int(out[0]), int(out[1]))
+#         self.pixel_format = out[2]
+#         self.fps = float(out[3].split("/")[0]) / float(out[3].split("/")[1])
+#         self.bit_depth = int(out[4])
+#         self.nframes = int(out[5])
+
+#         if self.bit_depth == 16:
+#             self.dtype = np.dtype("<u2")
+#         elif self.bit_depth == 8:
+#             self.dtype = np.dtype("<u1")
+#         else:
+#             raise RuntimeError(f"Cannot work with bit depth {self.bit_depth}")
+
+#     def undistort_frames(self, frames, progress_bar=True):
+#         if (self.intrinsic_matrix is not None) and (self.distortion_coeffs is not None):
+#             for i, _frame in tqdm(
+#                 enumerate(frames),
+#                 total=len(frames),
+#                 desc="Removing frame distortion",
+#                 disable=not progress_bar,
+#             ):
+#                 frames[i] = cv2.undistort(_frame, self.intrinsic_matrix, self.distortion_coeffs)
+#         return frames
+
+#     def get_frames(self, frame_range=None):
+#         import datetime
+#         list_order = None
+#         if frame_range is None:
+#             use_frames = np.arange(self.nframes).astype("int16")
+#             frame_select = [
+#                 "-ss",
+#                 str(datetime.timedelta(seconds=use_frames[0] / self.fps)),
+#                 "-vframes",
+#                 str(len(use_frames)),
+#             ]
+#         elif isinstance(frame_range, range):
+#             # ASSUMES THE RANGE IS CONTIGUOUS!!!!
+#             # TODO: add a check
+#             use_frame_range = np.asarray(list(frame_range))
+#             use_frame_range = use_frame_range[use_frame_range<self.nframes]
+#             frame_select = [
+#                 "-ss",
+#                 str(datetime.timedelta(seconds=use_frame_range[0] / self.fps)),
+#                 "-vframes",
+#                 str(len(use_frame_range)),
+#             ]
+#         elif isinstance(frame_range, (list, np.ndarray)):
+#             # NEED TO REORDER USING THE LIST ORDER
+#             use_frame_range = np.asarray(frame_range)
+#             use_frame_range = use_frame_range[use_frame_range<self.nframes]
+#             list_order = np.argsort(np.argsort(use_frame_range))
+#             list_string = "+".join([f"eq(n\,{_frame})" for _frame in use_frame_range])
+#             # list_string = 'eq(n\,1)'
+#             frame_select = [
+#                 "-vf",
+#                 f"select={list_string}",
+#                 "-vsync",
+#                 "0",
+#                 "-vframes",
+#                 str(len(use_frame_range)),
+#             ]
+#         elif isinstance(frame_range, int):
+#             frame_select = [
+#                 "-ss",
+#                 str(datetime.timedelta(seconds=frame_range / self.fps)),
+#                 "-vframes",
+#                 "1",
+#             ]
+#         else:
+#             raise RuntimeError("Did not understand frame range")
+
+#         command = (
+#             ["ffmpeg", "-loglevel", "fatal", "-i", self.filepath]
+#             + frame_select
+#             + [
+#                 "-f",
+#                 "image2pipe",
+#                 "-s",
+#                 "{:d}x{:d}".format(*self.frame_size),
+#                 "-pix_fmt",
+#                 self.pixel_format,
+#                 "-threads",
+#                 str(self.threads),
+#                 "-slices",
+#                 str(self.slices),
+#                 "-slicecrc",
+#                 str(self.slicecrc),
+#                 "-vcodec",
+#                 "rawvideo",
+#                 "-",
+#             ]
+#         )
+
+#         pipe = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+#         out, err = pipe.communicate()
+#         if err:
+#             print("error", err)
+#             return None
+
+#         total_bytes = len(out)
+#         bytes_per_frame = (self.bit_depth / 8) * np.prod(self.frame_size)
+#         n_out_frames = int(total_bytes / bytes_per_frame)
+#         dat = np.frombuffer(out, dtype=self.dtype).reshape(
+#             (n_out_frames, self.frame_size[1], self.frame_size[0])
+#         )
+#         if list_order is not None:
+#             dat = dat[list_order]
+#         return dat
+
+
 class AviReader:
     def __init__(
         self,
         filepath,
-        threads=6,
-        slices=24,
-        slicecrc=1,
+        threads=16,
         intrinsic_matrix=None,
         distortion_coeffs=None,
         **kwargs,
     ):
         self.filepath = filepath
         self.threads = threads
-        self.slices = slices
-        self.slicecrc = slicecrc
         self.intrinsic_matrix = intrinsic_matrix
         self.distortion_coeffs = distortion_coeffs
         self.get_file_info()
@@ -374,12 +556,15 @@ class AviReader:
                 frames[i] = cv2.undistort(_frame, self.intrinsic_matrix, self.distortion_coeffs)
         return frames
 
-    def get_frames(self, frame_range=None):
+    def get_frames(self, frame_range=None, fast_seek=False):
         import datetime
+
         list_order = None
+        input_opts = []
+        output_opts = []
         if frame_range is None:
             use_frames = np.arange(self.nframes).astype("int16")
-            frame_select = [
+            output_opts = [
                 "-ss",
                 str(datetime.timedelta(seconds=use_frames[0] / self.fps)),
                 "-vframes",
@@ -387,32 +572,55 @@ class AviReader:
             ]
         elif isinstance(frame_range, range):
             use_frame_range = np.asarray(list(frame_range))
-            use_frame_range = use_frame_range[use_frame_range<self.nframes]
-            frame_select = [
-                "-ss",
-                str(datetime.timedelta(seconds=use_frame_range[0] / self.fps)),
-                "-vframes",
-                str(len(use_frame_range)),
-            ]
+            use_frame_range = use_frame_range[use_frame_range < self.nframes]
+            if frame_range.step == 1:
+                input_opts = [
+                    "-ss",
+                    str(datetime.timedelta(seconds=use_frame_range[0] / self.fps)),
+                ]
+                output_opts = [
+                    "-vframes",
+                    str(len(use_frame_range)),
+                ]
+            else:
+                dat = self.get_frames(use_frame_range)
+                return dat
         elif isinstance(frame_range, (list, np.ndarray)):
-            # NEED TO REORDER USING THE LIST ORDER
             use_frame_range = np.asarray(frame_range)
-            use_frame_range = use_frame_range[use_frame_range<self.nframes]
-            list_order = np.argsort(np.argsort(use_frame_range))
-            list_string = "+".join([f"eq(n\,{_frame})" for _frame in use_frame_range])
-            # list_string = 'eq(n\,1)'
-            frame_select = [
-                "-vf",
-                f"select={list_string}",
-                "-vsync",
-                "0",
-                "-vframes",
-                str(len(use_frame_range)),
-            ]
+            use_frame_range = use_frame_range[use_frame_range < self.nframes]
+            # 1) process as range if frames are contiguous
+            # 2) if spacing is large grab individual frames
+            # 3) if spacing is small process using the vf select filter
+            # 4) with fast seek turned on use more ram to read the file then return indexed results...
+            if (np.diff(use_frame_range) == 1).all():
+                dat = self.get_frames(range(use_frame_range[0], use_frame_range[-1] + 1))
+                return dat
+            elif fast_seek:
+                dat = self.get_frames(range(min(use_frame_range), max(use_frame_range) + 1))
+                idx = use_frame_range - min(use_frame_range)
+                return dat[idx]
+            elif np.abs(np.diff(use_frame_range)).mean() >= 10:
+                dat = []
+                for _frame in use_frame_range:
+                    dat.append(self.get_frames(int(_frame)).squeeze())
+                return np.array(dat)
+            else:
+                list_order = np.argsort(np.argsort(use_frame_range))
+                list_string = "+".join([f"eq(n\,{_frame})" for _frame in use_frame_range])
+                output_opts = [
+                    "-vf",
+                    f"select={list_string}",
+                    "-vsync",
+                    "0",
+                    "-vframes",
+                    str(len(use_frame_range)),
+                ]
         elif isinstance(frame_range, int):
-            frame_select = [
+            input_opts = [
                 "-ss",
                 str(datetime.timedelta(seconds=frame_range / self.fps)),
+            ]
+            output_opts = [
                 "-vframes",
                 "1",
             ]
@@ -420,8 +628,10 @@ class AviReader:
             raise RuntimeError("Did not understand frame range")
 
         command = (
-            ["ffmpeg", "-loglevel", "fatal", "-i", self.filepath]
-            + frame_select
+            ["ffmpeg", "-loglevel", "fatal"]
+            + input_opts
+            + ["-i", self.filepath]
+            + output_opts
             + [
                 "-f",
                 "image2pipe",
@@ -431,10 +641,6 @@ class AviReader:
                 self.pixel_format,
                 "-threads",
                 str(self.threads),
-                "-slices",
-                str(self.slices),
-                "-slicecrc",
-                str(self.slicecrc),
                 "-vcodec",
                 "rawvideo",
                 "-",
@@ -463,9 +669,7 @@ def downsample_frames(frames, downsample=4):
     if downsample == 1:
         return frames
     nframes, height, width = frames.shape[:3]
-    ds_frames = np.zeros(
-        (nframes, height // downsample, width // downsample), dtype=frames.dtype
-    )
+    ds_frames = np.zeros((nframes, height // downsample, width // downsample), dtype=frames.dtype)
     for i in range(len(frames)):
         ds_frames[i] = cv2.resize(frames[i], ds_frames.shape[1:][::-1])
     return ds_frames
@@ -488,7 +692,6 @@ def read_frames_multicam(
     # make sure we support inflating frames with nans...
     dat = {}
     for _path, _cam in paths.items():
-
         try:
             use_config = default_config | config[_cam]
         except KeyError:
@@ -497,7 +700,10 @@ def read_frames_multicam(
 
         reader = AutoReader(_path, **use_config)
         _dat = reader.open()
-        _dat = reader.get_frames(frames[_cam])
+        if type(reader).__name__ == "AviReader":
+            _dat = reader.get_frames(frames[_cam], fast_seek=True)
+        else:
+            _dat = reader.get_frames(frames[_cam])
         _dat = reader.undistort_frames(_dat)
 
         if downsample is not None:
@@ -509,7 +715,9 @@ def read_frames_multicam(
     return dat
 
 
-def fill_timestamps(timestamps, use_timestamp_field="device_timestamp", capture_number="frame_id", period=0.01):
+def fill_timestamps(
+    timestamps, use_timestamp_field="device_timestamp", capture_number="frame_id", period=0.01
+):
     # TODO: add timestamp check as well, not just capture number
     capture_diff = timestamps[capture_number].diff()
     gaps = capture_diff > 1
@@ -609,12 +817,12 @@ def get_bground(
     ext = os.path.splitext(dat_path)[1]
     reader = AutoReader(dat_path, frame_size=frame_size, dtype=dtype, **kwargs)
     reader.open()
-    use_frames = list(range(0, reader.nframes, spacing))
+    use_frames = range(0, reader.nframes, spacing)
     bground_frames = reader.get_frames(use_frames).astype("float32")
     bground_frames = reader.undistort_frames(bground_frames)
     reader.close()
 
-    if valid_range is not None: 
+    if valid_range is not None:
         bground_frames[bground_frames < valid_range[0]] = np.nan
         bground_frames[bground_frames > valid_range[1]] = np.nan
     bground = agg_func(bground_frames, axis=0)
