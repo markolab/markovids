@@ -250,7 +250,7 @@ class RawFileReader:
         distortion_coeffs=None,
     ):
         # attempt to retrieve metadata
-        metadata = toml.load(os.path.dirname(filepath, "metadata.toml"))
+        metadata = toml.load(os.path.join(os.path.dirname(filepath), "metadata.toml"))
         cam, ext = os.path.splitext(os.path.basename(filepath))
 
         if frame_size is None:
