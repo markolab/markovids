@@ -20,10 +20,10 @@ class MP4WriterPreview:
         threads=6,
         slices=25,
         slicecrc=1,
-        crf=28,
+        crf=23,
         cmap="turbo",
         font=cv2.FONT_HERSHEY_SIMPLEX,
-        txt_pos=(30, 30),
+        text_pos=(30, 30),
     ):
         ext = os.path.splitext(filepath)[1]
         if ext != ".mp4":
@@ -39,7 +39,7 @@ class MP4WriterPreview:
         self.pipe = None
         self.crf = crf
         self.cmap = plt.get_cmap(cmap)  # only used for intensity images
-        self.txt_pos = txt_pos
+        self.text_pos = text_pos
         self.font = font
 
     def open(self):
@@ -76,47 +76,6 @@ class MP4WriterPreview:
 
         self.pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
 
-    def pseudocolor_frames(self, frames, vmin=0, vmax=100):
-        # pseudo_ims = np.zeros(
-        #     (len(frames), int(self.frame_size[1] * 1.5), self.frame_size[0]), dtype="uint8"
-        # )
-        pseudo_ims = np.zeros(
-            (len(frames), self.frame_size[1], self.frame_size[0], 3), dtype="uint8"
-        )
-        for i, _img in enumerate(frames):
-            disp_img = _img.copy().astype("float32")
-            disp_img = (disp_img - vmin) / (vmax - vmin)
-            disp_img[disp_img < 0] = 0
-            disp_img[disp_img > 1] = 1
-            disp_img = np.delete(self.cmap(disp_img), 3, 2) * 255
-            pseudo_ims[i] = disp_img
-        return pseudo_ims
-
-    def inscribe_frame_number(self, frame, idx):
-        cv2.putText(
-            frame,
-            str(idx),
-            self.txt_pos,
-            self.font,
-            1,
-            (255,255,255),
-            2,
-            cv2.LINE_AA,
-        )
-
-    def mark_frame(self, frame, marker_color, marker_size):
-        # bottom right for now
-        height, width, channels = frame.shape
-        x1, y1 = width, height
-        x2, y2 = int(x1 - width * marker_size), int(y1 - height * marker_size)
-
-        cv2.rectangle(
-            frame,
-            (x2, y2),
-            (x1, y1),
-            marker_color,
-            -1
-        )
 
     def write_frames(
         self,
@@ -138,7 +97,7 @@ class MP4WriterPreview:
         assert len(frames) == len(frames_idx)
 
         if frames.ndim == 3:
-            write_frames = self.pseudocolor_frames(frames, vmin=vmin, vmax=vmax)
+            write_frames = pseudocolor_frames(frames, vmin=vmin, vmax=vmax, cmap=self.cmap)
         elif frames.ndim == 4:
             write_frames = frames
         else:
@@ -148,9 +107,9 @@ class MP4WriterPreview:
             zip(frames_idx, write_frames), total=len(frames), disable=not progress_bar
         ):
             _tmp_frame = _frame.copy()
-            self.inscribe_frame_number(_tmp_frame, _idx)
+            inscribe_text(_tmp_frame, str(_idx), font=self.font, text_pos=self.text_pos)
             if _idx in mark_frames:
-                self.mark_frame(_tmp_frame, marker_color, marker_size) 
+                mark_frame(_tmp_frame, marker_color, marker_size) 
             _tmp_frame = cv2.cvtColor(_tmp_frame.astype("uint8"), cv2.COLOR_RGB2YUV_I420)
             self.pipe.stdin.write(_tmp_frame.tobytes())
 
@@ -799,6 +758,58 @@ def read_timestamps_multicam(
     merged_ts.index = list(ts.values())[0].index
 
     return ts, merged_ts
+
+
+def inscribe_text(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, text_pos=(30, 30)):
+    cv2.putText(
+        frame,
+        text,
+        text_pos,
+        font,
+        1,
+        (255,255,255),
+        2,
+        cv2.LINE_AA,
+    )
+
+
+def pseudocolor_frames(frames, vmin=0, vmax=100, cmap=plt.get_cmap("turbo")):
+    nframes, height, width = frames.shape
+    pseudo_ims = np.zeros(
+        (nframes, height, width, 3), dtype="uint8"
+    )
+    for i, _img in enumerate(frames):
+        disp_img = _img.copy().astype("float32")
+        disp_img = (disp_img - vmin) / (vmax - vmin)
+        disp_img[disp_img < 0] = 0
+        disp_img[disp_img > 1] = 1
+        disp_img = np.delete(cmap(disp_img), 3, 2) * 255
+        pseudo_ims[i] = disp_img
+    return pseudo_ims
+
+
+def mark_frame(frame, marker_color, marker_size):
+    # bottom right for now
+    height, width, channels = frame.shape
+    x1, y1 = width, height
+    x2, y2 = int(x1 - width * marker_size), int(y1 - height * marker_size)
+
+    cv2.rectangle(
+        frame,
+        (x2, y2),
+        (x1, y1),
+        marker_color,
+        -1
+    )
+
+
+def inscribe_masks(frames, masks, colors={1: [255,0,0], 2: [0,0,255]}, alpha=.5):
+    color_mask = np.zeros_like(frames)
+    for _idx, _color in colors.items():
+        mask_idx = (masks == _idx)
+        color_mask[mask_idx, :] = _color
+    use_frames = frames * (1 - alpha) + alpha * color_mask
+    return use_frames.astype("uint8")
 
 
 def get_bground(
