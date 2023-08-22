@@ -868,3 +868,18 @@ def pixel_format_to_np_dtype(pixel_format: str):
         raise RuntimeError("Did not understand pixel format!")
 
     return np_dtype
+
+
+def format_intrinsics(intrinsics):
+    intrinsic_matrix = {}
+    distortion_coeffs = {}
+    for k, v in intrinsics.items():
+        intrinsic_matrix[k] = np.array(
+            [
+                [v["CalibFocalLengthX"], 0, v["CalibOpticalCenterX"]],
+                [0, v["CalibFocalLengthY"], v["CalibOpticalCenterY"]],
+                [0, 0, 1],
+            ]
+        )
+        distortion_coeffs[k] = np.array([v["k1"], v["k2"], v["p1"], v["p2"], v["k3"]])
+    return intrinsic_matrix, distortion_coeffs
