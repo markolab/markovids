@@ -1,7 +1,9 @@
 import open3d as o3d
 import numpy as np
+import copy
 from tqdm.auto import tqdm
 from typing import Union, Optional
+from scipy import signal
 
 
 default_criteria = o3d.pipelines.registration.ICPConvergenceCriteria(
@@ -11,20 +13,23 @@ default_criteria = o3d.pipelines.registration.ICPConvergenceCriteria(
 default_estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint(
 )
 
-
 class DepthVideoPairwiseRegister:
     def __init__(
         self,
         max_correspondence_distance=1.0,
         min_npoints=2000,
         fitness_threshold=0.3,
-        current_reference_weight=1.25,
+        current_reference_weight=1.05,
         reference_debounce=0,
+        reference_min_npoints=3000,
+        reference_future_len=300,
+        reference_history_len=200,
+        reference_medfilt=21,
         pairwise_criteria=default_criteria,
         pairwise_estimation=default_estimation,
-        cleanup_nbs=9,
+        cleanup_nbs=21,
         cleanup_radius=3.0,
-        cleanup_nbs_combined=9,
+        cleanup_nbs_combined=21,
         cleanup_radius_combined=3.0,
     ):
         self.pairwise_registration_options = {
@@ -38,10 +43,37 @@ class DepthVideoPairwiseRegister:
         self.cleanup_nbs = cleanup_nbs
         self.cleanup_radius = cleanup_radius
         self.cleanup_nbs_combined = cleanup_nbs_combined
-        self.cleanup_radius_combined = cleanup_nbs_combined
+        self.cleanup_radius_combined = cleanup_radius_combined
         self.reference_debounce = reference_debounce
+        self.reference_history = reference_history_len
+        self.reference_future = reference_future_len
+        self.reference_medfilt = reference_medfilt
+        self.reference_min_npoints = reference_min_npoints
+        self.weights = None
+        
 
-    def get_transforms(self, pcls):
+    def get_reference_node_weights(self, pcls):
+        
+        cams = list(pcls.keys())
+        npoints = {_cam: np.array([len(_.points) for _ in pcls[_cam]]) for _cam in cams} 
+        npoints_arr_raw = np.array(list(npoints.values())).T
+        boxcar_filter_history = np.ones((self.reference_history,)) / self.reference_history
+        boxcar_filter_future = (np.ones((self.reference_future,)) / self.reference_future)
+        npoints_mask = signal.medfilt((npoints_arr_raw > self.reference_min_npoints).astype("uint8"), (self.reference_medfilt,1))
+        
+        # filter the array with a causal boxcar filter to capture history
+        # filter the reversed array with the same filter to capture future
+        # mask to ensure we only take the reference if it has the sufficient number of points
+        weight_matrix = (signal.lfilter(boxcar_filter_history, 1, npoints_arr_raw, axis=0)
+                       + signal.lfilter(boxcar_filter_future, 1, npoints_arr_raw[::-1], axis=0)[::-1]) * npoints_mask         
+        self.weights = {_cam: weight_matrix[:,i] for i, _cam in enumerate(cams)}
+        self.npoints = npoints
+
+        
+    def get_transforms(self, pcls, progress_bar=True):
+        if self.weights is None:
+            self.get_reference_node_weights(pcls)
+        
         cams = list(pcls.keys())
         npcls = len(pcls[cams[0]])
 
@@ -58,19 +90,21 @@ class DepthVideoPairwiseRegister:
         transforms = {
             _cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams
         }
-        npoints = {_cam: len(pcls[_cam][0].points) for _cam in cams}
-        reference_node = max(npoints, key=npoints.get)
+        init_weights = {_cam: self.weights[_cam][0] for _cam in cams}
+        reference_node = max(init_weights, key=init_weights.get)
         previous_reference_node_proposal = reference_node
 
         reference_debounce_count = 0
-        for _frame in tqdm(range(npcls)):
+        for _frame in tqdm(range(npcls), disable=not progress_bar, desc="Estimating transformations"):
             # if the target object is missing, simply reference camera against previous transform
 
-            npoints = {_cam: len(pcls[_cam][_frame].points) for _cam in cams}
+            # npoints = {_cam: len(pcls[_cam][_frame].points) for _cam in cams}
+            npoints = {_cam: self.npoints[_cam][_frame] for _cam in cams}
+            weights = {_cam: self.weights[_cam][_frame] for _cam in cams}
             if reference_node is not None:
-                npoints[reference_node] *= self.current_reference_weight
+                weights[reference_node] *= self.current_reference_weight
 
-            reference_node_proposal = max(npoints, key=npoints.get)
+            reference_node_proposal = max(weights, key=weights.get)
             if (reference_node_proposal != reference_node) and (
                 reference_node_proposal == previous_reference_node_proposal
             ):
@@ -134,33 +168,40 @@ class DepthVideoPairwiseRegister:
                     self.current_transform[_cam] = transform
                     self.transforms[_cam][_frame] = transform
 
-    def combine_pcls(self, pcls):
+    def combine_pcls(self, pcls, progress_bar=True):
         cams = list(pcls.keys())
         npcls = len(pcls[cams[0]])
         pcls_combined = []
 
-        for _frame in tqdm(range(npcls)):
+        for _frame in tqdm(range(npcls), disable=not progress_bar, desc="Stitching PCLs"):
             pcl_combined = o3d.geometry.PointCloud()
             for _cam in cams:
                 use_transform = self.transforms[_cam][_frame]
                 if np.isnan(use_transform).any():
                     continue
-                use_pcl = copy.deepcopy(pcls[_cam][_frame]).transform(use_transform)
+                # I don't think this meaningfully copies the data...
+                # use_pcl = copy.deepcopy(pcls[_cam][_frame]).transform(use_transform)
+                use_pcl = pcls[_cam][_frame].transform(use_transform)
+                
                 if self.cleanup_nbs is not None:
-                    use_pcl, ind = use_pcl.remove_radius_outlier(
+                    cl, ind = use_pcl.remove_radius_outlier(
                         self.cleanup_nbs, self.cleanup_radius
                     )
+                    use_pcl = use_pcl.select_by_index(ind)
                     # pcl_combined += use_pcl
                 pcl_combined += use_pcl
 
             if len(pcl_combined.points) < 10:
-                continue
-
-            if self.cleanup_nbs_combined is not None:
-                pcl_combined, ind = pcl_combined.remove_radius_outlier(
+                pcls_combined.append(pcl_combined)
+            elif self.cleanup_nbs_combined is not None:
+                cl, ind = pcl_combined.remove_radius_outlier(
                     self.cleanup_nbs_combined, self.cleanup_radius_combined
                 )
-            pcls_combined.append(pcl_combined)
+                pcl_combined = pcl_combined.select_by_index(ind)
+                pcls_combined.append(pcl_combined)
+            else:
+                pcls_combined.append(pcl_combined)
+
 
         return pcls_combined
 
@@ -230,3 +271,68 @@ def optimize_pose_graph(
             default_opt,
             option,
         )
+
+
+def correct_breakpoints(
+    combined_pcl,
+    reference_nodes,
+    criteria=default_criteria,
+    estimation=default_estimation,
+    max_correspondence_distance=1.0,
+):
+    breakpoints = []
+    transforms = []
+
+    # CHECK IDX
+    for i, (_ref1, _ref2) in enumerate(
+        zip(reference_nodes[:-1], reference_nodes[1:])
+    ):
+        if _ref1 != _ref2:
+            breakpoints.append(i + 1)
+
+    frame_groups = []
+    for _bpoint in breakpoints:
+        cur_node = reference_nodes[_bpoint]
+        next_break = len(reference_nodes[_bpoint:])
+        for i, _ref_node in enumerate(reference_nodes[_bpoint:]):
+            if _ref_node != cur_node:
+                next_break = i
+                break
+        
+        _tmp_transforms = []
+        for j in range(0, 1):
+            for k in range(1, 2):
+                use_pcl = combined_pcl[_bpoint + j]
+                target_pcl = combined_pcl[_bpoint - k]
+
+                # no z offset
+                init_transformation = np.eye(4)
+                c0 = np.array(np.median(target_pcl.points, axis=0))
+                c1 = np.array(np.median(use_pcl.points, axis=0))
+                df = c0 - c1
+                init_transformation[:3, 3] = df
+                
+                # potentially downweight any z-shifts, those should be 0...
+                _tmp_transforms.append(init_transformation)
+
+                # do some time filtering, check n+1, n+2, n+3 relative to n and n-1 after breakpoint...
+                # dct = pcl.registration.pairwise_registration(
+                #     use_pcl,
+                #     target_pcl,
+                #     init_transformation=init_transformation,
+                #     compute_information=False,
+                #     max_correspondence_distance=max_correspondence_distance,
+                #     criteria=criteria,
+                #     estimation=estimation,
+                # )
+                # _tmp_fitnesses.append(dct["fitness"])
+                # _tmp_transforms.append(dct["transformation"])
+        
+        use_transform = np.median(_tmp_transforms,axis=0)
+        _frame_group = range(_bpoint, _bpoint + next_break)
+        frame_groups.append(_frame_group)
+        transforms.append(use_transform)
+        for _frame in _frame_group:
+            combined_pcl[_frame] = combined_pcl[_frame].transform(use_transform)
+
+    return breakpoints, frame_groups, transforms

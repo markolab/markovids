@@ -101,8 +101,8 @@ def get_roi(
 
 
 default_pre_strels = {cv2.MORPH_DILATE: cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))}
-# default_post_strels = {cv2.MORPH_ERODE: cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))}
-default_post_strels = {}
+default_post_strels = {cv2.MORPH_ERODE: cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))}
+# default_post_strels = {}
 
 
 def clean_roi(
@@ -111,10 +111,11 @@ def clean_roi(
     post_strels=default_post_strels,
     fill_holes=True,
     use_cc=True,
+    progress_bar=True
 ):
     # assumes we've received a binary mask
     results = np.zeros(dat.shape, dtype="bool")
-    for i, _frame in tqdm(enumerate(dat), total=len(dat), desc="Cleaning mask"):
+    for i, _frame in tqdm(enumerate(dat), total=len(dat), desc="Cleaning mask", disable=not progress_bar):
         new_frame = _frame.copy().astype("uint8")
         for k, v in pre_strels.items():
             new_frame = cv2.morphologyEx(new_frame, k, v)

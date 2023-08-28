@@ -660,10 +660,10 @@ def read_frames_multicam(
         reader = AutoReader(_path, **use_config)
         _dat = reader.open()
         if type(reader).__name__ == "AviReader":
-            _dat = reader.get_frames(frames[_cam], fast_seek=True)
+            _dat = reader.get_frames(frames[_cam], fast_seek=True).copy()
         else:
-            _dat = reader.get_frames(frames[_cam])
-        _dat = reader.undistort_frames(_dat)
+            _dat = reader.get_frames(frames[_cam]).copy()
+        _dat = reader.undistort_frames(_dat, progress_bar=progress_bar)
 
         if downsample is not None:
             _dat = downsample_frames(_dat, downsample)

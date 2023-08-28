@@ -5,10 +5,12 @@ import numpy as np
 def pcl_from_depth(
     depth_image,
     intrinsic_matrix,
+    estimate_normals=False,
     z_scale=4.0,
     is_tensor=False,
     project_xy=True,
     post_scale=None,
+    post_z_shift=None,
     normal_radius=None,
     normal_nn=30,
 ):
@@ -20,23 +22,28 @@ def pcl_from_depth(
     height, width = depth_image.shape
 
     u, v = np.meshgrid(np.arange(width), np.arange(height))
-    u = u.astype("float")
-    v = v.astype("float")
-    z = depth_image.astype("float") / z_scale
-    valid_points = ~np.isnan(depth_image)
+    u = u.astype("float32")
+    v = v.astype("float32")
+    raw_z = depth_image.astype("float32") / z_scale
+
+    if post_z_shift is not None:
+        use_z = post_z_shift - raw_z
+    else:
+        use_z = raw_z
 
     if project_xy:
-        x = (u - cx) * z / fx
-        y = (v - cy) * z / fy
+        x = (u - cx) * raw_z / fx
+        y = (v - cy) * raw_z / fy
     else:
         x = u
         y = v
 
+    valid_points = ~np.isnan(use_z) & (use_z > 0)
     xyz = np.array(
         [
             x[valid_points].ravel(),
             y[valid_points].ravel(),
-            z[valid_points].ravel(),
+            use_z[valid_points].ravel(),
         ]
     ).T
 
@@ -50,7 +57,8 @@ def pcl_from_depth(
         pcl = o3d.geometry.PointCloud()
         pcl.points = o3d.utility.Vector3dVector(xyz)
 
-    pcl.estimate_normals(o3d.geometry.KDTreeSearchParamKNN(knn=normal_nn))
+    if estimate_normals:
+        pcl.estimate_normals(o3d.geometry.KDTreeSearchParamKNN(knn=normal_nn))
     return pcl
 
 
@@ -132,7 +140,8 @@ def depth_from_pcl_interpolate(
     height=480,
     z_scale=4.0,
     project_xy=True,
-    post_scale=1e3,
+    post_scale=None,
+    post_z_shift=None,
     z_clip=1e-3,
     z_adjust=None,
     fill_value=0.0,
@@ -163,6 +172,9 @@ def depth_from_pcl_interpolate(
     x = points[:, 0]
     y = points[:, 1]
     z = points[:, 2]
+
+    if post_z_shift is not None:
+        z = -z + post_z_shift / z_scale
 
     if project_xy:
         u = (x * fx) / z + cx
