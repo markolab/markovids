@@ -26,6 +26,11 @@ def cli():
 @click.option("--registration-reference-history-len", type=int, default=200, show_envvar=True)
 @click.option("--registration-cleanup-nbs", type=int, default=9, show_envvar=True)
 @click.option("--registration-cleanup-nbs-combined", type=int, default=15, show_envvar=True)
+@click.option("--reproject-stitch-buffer", type=int, default=400, show_envvar=True)
+@click.option("--reproject-interpolation-distance-threshold", type=float, default=1.75, show_envvar=True)
+@click.option("--reproject-interpolation-method", type=str, default="nearest", show_envvar=True)
+@click.option("--reproject-smooth-kernel", type=(float, float, float), default=(1., .75, .75), show_envvar=True)
+@click.option("--reproject-smooth-kernel-bpoint", type=(float, float, float), default=(2., 1.5, 1.5), show_envvar=True)
 # fmt: on
 def cli_registration(
     data_dir,
@@ -43,6 +48,11 @@ def cli_registration(
     registration_reference_history_len,
     registration_cleanup_nbs,
     registration_cleanup_nbs_combined,
+    reproject_stitch_buffer,
+    reproject_interpolation_distance_threshold,
+    reproject_interpolation_method,
+    reproject_smooth_kernel,
+    reproject_smooth_kernel_bpoint,
 ):
     registration_kwargs = {
         "max_correspondence_distance": registration_max_correspondence_distance,
@@ -69,11 +79,11 @@ def cli_registration(
     reproject_pcl_to_depth(
         os.path.join(data_dir, registration_dir),
         intrinsics_file,
-        stitch_buffer=400,
-        interpolation_distance_threshold=1.75,
-        interpolation_method="nearest",
-        smooth_kernel=(1.0, 0.75, 0.75),
-        smooth_kernel_bpoint=(2.0, 1.5, 1.5),
+        stitch_buffer=reproject_stitch_buffer,
+        interpolation_distance_threshold=reproject_interpolation_distance_threshold,
+        interpolation_method=reproject_interpolation_method,
+        smooth_kernel=reproject_smooth_kernel,
+        smooth_kernel_bpoint=reproject_smooth_kernel_bpoint,
     )
 
 

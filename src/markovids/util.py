@@ -146,7 +146,7 @@ def convert_depth_to_pcl_and_register(
     last_pcl = None
     last_reference_node = None
 
-    for batch in tqdm(frame_batches[:2], desc="Conversion to PCL and registration"):
+    for batch in tqdm(frame_batches, desc="Conversion to PCL and registration"):
         left_edge = max(batch - batch_overlap, 0)
         left_pad_size = batch - left_edge
         right_edge = min(batch + batch_size + batch_overlap, nframes)
@@ -306,9 +306,8 @@ def reproject_pcl_to_depth(
     visualize_results: bool = True,
 ):
     # registration_dir = os.path.dirname(registration_file)
-    # session_name = os.path.normpath(os.path.dirname(registration_file)).split(os.sep)[-2]
-    session_name = os.path.dirname(os.path.normpath(registration_dir))
-
+    session_name = os.path.normpath(os.path.dirname(registration_dir)).split(os.sep)[-1]
+    print(f"Session: {session_name}") 
     # session name is two levels down...
     intrinsics = toml.load(intrinsics_file)
     intrinsics_matrix, distortion_coeffs = format_intrinsics(intrinsics)
