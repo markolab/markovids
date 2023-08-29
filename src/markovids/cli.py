@@ -67,7 +67,7 @@ def cli_registration(
     )
 
     reproject_pcl_to_depth(
-        os.path.join(data_dir, registration_dir, "pcls.hdf5"),
+        os.path.join(data_dir, registration_dir),
         intrinsics_file,
         stitch_buffer=400,
         interpolation_distance_threshold=1.75,

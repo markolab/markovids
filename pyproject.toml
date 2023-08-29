@@ -26,3 +26,6 @@ pcl = [
 # where = ["src"]
 
 
+[project.scripts]
+markovids = "markovids.cli:cli"
+

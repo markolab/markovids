@@ -146,7 +146,7 @@ def convert_depth_to_pcl_and_register(
     last_pcl = None
     last_reference_node = None
 
-    for batch in tqdm(frame_batches, desc="Conversion to PCL and registration"):
+    for batch in tqdm(frame_batches[:2], desc="Conversion to PCL and registration"):
         left_edge = max(batch - batch_overlap, 0)
         left_pad_size = batch - left_edge
         right_edge = min(batch + batch_size + batch_overlap, nframes)
@@ -282,14 +282,13 @@ def convert_depth_to_pcl_and_register(
     # store other attrs for downstream processing?
 
     pcl_f.close()
-
     save_metadata["complete"] = True
     with open(os.path.join(registration_dir, "pcls.toml"), "w") as f:
         toml.dump(save_metadata, f)
 
 
 def reproject_pcl_to_depth(
-    registration_file: str,
+    registration_dir: str,
     intrinsics_file: str,
     crop_pad: int = 50,
     stitch_buffer: int = 400,
@@ -306,8 +305,9 @@ def reproject_pcl_to_depth(
     smooth_kernel_bpoint: Tuple[float, float, float] = (2.0, 1.5, 1.5),
     visualize_results: bool = True,
 ):
-    registration_dir = os.path.dirname(registration_file)
-    session_name = os.path.normpath(os.path.dirname(registration_file)).split(os.sep)[-2]
+    # registration_dir = os.path.dirname(registration_file)
+    # session_name = os.path.normpath(os.path.dirname(registration_file)).split(os.sep)[-2]
+    session_name = os.path.dirname(os.path.normpath(registration_dir))
 
     # session name is two levels down...
     intrinsics = toml.load(intrinsics_file)
