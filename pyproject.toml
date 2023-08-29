@@ -11,6 +11,7 @@ dependencies = [
 	"opencv-python-headless",
 	"numpy",
 	"pandas",
+	"h5py",
 	"matplotlib",
 	"scikit-image",
 	"scipy",
