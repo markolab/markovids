@@ -391,11 +391,15 @@ def correct_breakpoints_extrapolate(
         centroid_array = np.array(centroids) # should be t x 3 (x, y, z)
         idx_array = np.arange(extrapolate_history)
         # interpolate target position
-        new_point = idx_array[-1] + 1
-        c0 = np.zeros((3,), dtype="float")
-        for _axis in range(centroid_array.shape[1]):
-            p = np.polynomial.Polynomial.fit(idx_array, centroid_array[:,_axis], poly_deg)
-            c0[_axis] = p(new_point)
+        # new_point = idx_array[-1] + 1
+        # c0 = np.zeros((3,), dtype="float")
+        # for _axis in range(centroid_array.shape[1]):
+            # p = np.polynomial.Polynomial.fit(idx_array, centroid_array[:,_axis], poly_deg)
+            # c0[_axis] = p(new_point)
+
+        # take median vel and use to project next point...
+        df = np.median(np.diff(centroid_array, axis=0), axis=0)
+        c0 = centroid_array[-1] + df
 
         # c0 is new target built through extrapolation, find diff with c1, position of current pcl
         use_transform = np.eye(4)

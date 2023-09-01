@@ -152,7 +152,7 @@ def convert_depth_to_pcl_and_register(
     last_pcl = None
     last_reference_node = None
 
-    for batch in tqdm(frame_batches[:6], desc="Conversion to PCL and registration"):
+    for batch in tqdm(frame_batches, desc="Conversion to PCL and registration"):
         left_edge = max(batch - batch_overlap, 0)
         left_pad_size = batch - left_edge
         right_edge = min(batch + batch_size + batch_overlap, nframes)
@@ -203,6 +203,15 @@ def convert_depth_to_pcl_and_register(
             left_pad_size : right_edge_no_pad - left_edge
         ]
 
+        # we need to know when we have another cam shift
+        cur_node = registration.reference_node[0]
+        next_break = len(registration.reference_node)
+
+        for i, _ref_node in enumerate(registration.reference_node):
+            if _ref_node != cur_node:
+                next_break = i # when we switch cams
+                break
+        
         # need to correct breaks across batch transitions...
         # STORE LAST TRANSFORM AND REFERENCE NODE, IF THEY MATCH APPLY TRANSFORM
         # IF THEY DON'T COMPUTE NEW ONE...
@@ -211,9 +220,8 @@ def convert_depth_to_pcl_and_register(
             last_reference_node == registration.reference_node[0]
         ):
             # simply apply the last transform if the reference node matches...
-            # TODO: smooth only until next frame group d00d (can also do these after bpoint code...
-            # pass
-            for i in range(len(pcls_combined)):
+            # only apply transformation for the current cam
+            for i in range(next_break):
                 pcls_combined[i] = pcls_combined[i].transform(last_bpoint_transform)
         elif (last_pcl is not None) and (
             last_reference_node != registration.reference_node[0]
@@ -221,14 +229,6 @@ def convert_depth_to_pcl_and_register(
             # TODO: add to list of bpoint transitions for smoothing...
             # if not recompute and apply to all data...
             # theoretically we could also extrapolate
-            cur_node = registration.reference_node[0]
-            next_break = len(registration.reference_node)
-
-            for i, _ref_node in enumerate(registration.reference_node):
-                if _ref_node != cur_node:
-                    next_break = i
-                    break
-
             use_transformation = np.eye(4)
             c0 = np.array(np.median(last_pcl.points, axis=0))
             c1 = np.array(np.median(pcls_combined[0].points, axis=0))
@@ -236,10 +236,10 @@ def convert_depth_to_pcl_and_register(
             df[2] = 0.0
             use_transformation[:3, 3] = df
             last_bpoint_transform = use_transformation
+            # fix only up until the next break point
+            # as a general rule 
             for i in range(next_break):
                 pcls_combined[i] = pcls_combined[i].transform(use_transformation)
-            # ONLY apply up to the appropriate breakpoint...I think that fixes out problem...
-            # alternatively just match across stitches for all changes...
             batch_bpoint = True
 
         bpoints, frame_groups, bpoint_transforms = correct_breakpoints_extrapolate(
@@ -503,7 +503,7 @@ def reproject_pcl_to_depth(
                 _tmp,
                 progress_bar=False,
                 frames_idx=list(range(batch, right_edge)),
-                vmin=10,
+                vmin=0,
                 vmax=600,
             )
 
