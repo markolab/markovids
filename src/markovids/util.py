@@ -9,7 +9,11 @@ from markovids.vid.io import (
 from markovids.depth.plane import get_floor
 from markovids.depth.io import load_segmentation_masks
 from markovids.pcl.io import pcl_from_depth, depth_from_pcl_interpolate
-from markovids.pcl.registration import DepthVideoPairwiseRegister, correct_breakpoints
+from markovids.pcl.registration import (
+    DepthVideoPairwiseRegister,
+    correct_breakpoints,
+    correct_breakpoints_extrapolate,
+)
 from tqdm.auto import tqdm
 from scipy import ndimage
 import os
@@ -27,10 +31,10 @@ o3d.utility.set_verbosity_level(o3d.utility.Error)
 pcl_kwargs_default = {"project_xy": True}
 registration_kwargs_default = {
     "max_correspondence_distance": 1.0,
-    "fitness_threshold": 0.35,
-    "reference_future_len": 300,
-    "reference_history_len": 200,
-    "cleanup_nbs": 9,
+    "fitness_threshold": 0.25,
+    "reference_future_len": 100,
+    "reference_history_len": 50,
+    "cleanup_nbs": 5,
     "cleanup_nbs_combined": 15,
 }
 
@@ -40,13 +44,13 @@ def convert_depth_to_pcl_and_register(
     intrinsics_file: str,
     registration_dir: str = "_registration",
     segmentation_dir: str = "_segmentation_tau-5",
-    background_spacing: int = 1000,
+    background_spacing: int = 500,
     floor_range: Tuple[float, float] = (1300.0, 1600.0),
     timestamp_merge_tolerance=0.003,  # in seconds
     burn_frames: int = 500,
-    valid_height_range: Tuple[float, float] = (20.0, 800.0),
+    valid_height_range: Tuple[float, float] = (10.0, 800.0),
     batch_size: int = 2000,
-    batch_overlap: int = 300,
+    batch_overlap: int = 150,
     voxel_down_sample: float = 1.0,
     pcl_kwargs: dict = {},
     registration_kwargs: dict = {},
@@ -95,7 +99,9 @@ def convert_depth_to_pcl_and_register(
             dat_paths.items(), total=len(dat_paths), desc="Computing backgrounds"
         )
     }
-    rois = {_cam: get_floor(bgrounds[_cam], floor_range=floor_range) for _cam in cameras}
+    rois = {
+        _cam: get_floor(bgrounds[_cam], floor_range=floor_range, dilations=10) for _cam in cameras
+    }
 
     floor_distances = {}
     for _cam in tqdm(cameras, desc="Getting floor distances"):
@@ -148,7 +154,7 @@ def convert_depth_to_pcl_and_register(
     last_pcl = None
     last_reference_node = None
 
-    for batch in tqdm(frame_batches, desc="Conversion to PCL and registration"):
+    for batch in tqdm(frame_batches[:6], desc="Conversion to PCL and registration"):
         left_edge = max(batch - batch_overlap, 0)
         left_pad_size = batch - left_edge
         right_edge = min(batch + batch_size + batch_overlap, nframes)
@@ -208,31 +214,48 @@ def convert_depth_to_pcl_and_register(
         ):
             # simply apply the last transform if the reference node matches...
             # TODO: smooth only until next frame group d00d (can also do these after bpoint code...
+            # pass
             for i in range(len(pcls_combined)):
                 pcls_combined[i] = pcls_combined[i].transform(last_bpoint_transform)
-        elif last_pcl is not None:
+        elif (last_pcl is not None) and (
+            last_reference_node != registration.reference_node[0]
+        ):
             # TODO: add to list of bpoint transitions for smoothing...
             # if not recompute and apply to all data...
+            # theoretically we could also extrapolate
+            cur_node = registration.reference_node[0]
+            next_break = len(registration.reference_node)
+
+            for i, _ref_node in enumerate(registration.reference_node):
+                if _ref_node != cur_node:
+                    next_break = i
+                    break
+
             use_transformation = np.eye(4)
             c0 = np.array(np.median(last_pcl.points, axis=0))
             c1 = np.array(np.median(pcls_combined[0].points, axis=0))
             df = c0 - c1
             df[2] = 0.0
-            # df[2] *= .1 # minimize z shifts...
             use_transformation[:3, 3] = df
             last_bpoint_transform = use_transformation
-            for i in range(len(pcls_combined)):
+            for i in range(next_break):
                 pcls_combined[i] = pcls_combined[i].transform(use_transformation)
+            # ONLY apply up to the appropriate breakpoint...I think that fixes out problem...
+            # alternatively just match across stitches for all changes...
             batch_bpoint = True
 
-        bpoints, frame_groups, bpoint_transforms = correct_breakpoints(
+        bpoints, frame_groups, bpoint_transforms = correct_breakpoints_extrapolate(
             pcls_combined,
             registration.reference_node,
-            registration_kwargs["max_correspondence_distance"],
+            # registration_kwargs["max_correspondence_distance"],
+            z_shift=True,  # I would set to false if we're not using extrapolate
         )
-
+        
+        # bpoints = []
+        # bpoint_transforms = []
         if len(bpoints) > 0:
             last_bpoint_transform = bpoint_transforms[-1]
+        
         last_pcl = pcls_combined[-1]
         last_reference_node = registration.reference_node[-1]
 
@@ -309,7 +332,7 @@ def reproject_pcl_to_depth(
 ):
     # registration_dir = os.path.dirname(registration_file)
     session_name = os.path.normpath(os.path.dirname(registration_dir)).split(os.sep)[-1]
-    print(f"Session: {session_name}") 
+    print(f"Session: {session_name}")
     # session name is two levels down...
     intrinsics = toml.load(intrinsics_file)
     intrinsics_matrix, distortion_coeffs = format_intrinsics(intrinsics)
@@ -428,6 +451,11 @@ def reproject_pcl_to_depth(
         compression="lzf",
     )
 
+    original_size = depth_f["frames"].shape[1:]
+    crop_size = depth_f["frames_crop"].shape[1:]
+
+    print(f"Original size {original_size}, crop size {crop_size}")
+
     for batch in tqdm(batches, desc="Cropping frames"):
         left_edge = max(batch - batch_overlap, 0)
         left_noverlap = batch - left_edge
@@ -439,6 +467,9 @@ def reproject_pcl_to_depth(
         depth_f["frames_crop"][batch:right_edge] = cropped_frames[left_noverlap:]
 
     bpoint_frame_index = [np.flatnonzero(pcl_frame_index == _bpoint)[0] for _bpoint in all_bpoints]
+
+    print(f"Found breakpoints at {bpoint_frame_index}")
+
     for _bpoint in tqdm(bpoint_frame_index, desc="Smoothing over breakpoints"):
         adj_bpoint_smooth_window = (
             min(bpoint_smooth_window[0], _bpoint),

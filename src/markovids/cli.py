@@ -15,16 +15,16 @@ def cli():
 @click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
 @click.option("--segmentation-dir", type=str, default="_segmentation_tau-5", show_envvar=True)
 @click.option("--background-spacing", type=int, default=500, show_envvar=True)
-@click.option("--batch-size", type=int, default=3000, show_envvar=True)
-@click.option("--batch-overlap", type=int, default=300, show_envvar=True)
-@click.option("--burn-frames", type=int, default=200, show_envvar=True)
-@click.option("--valid-height-range", type=(float, float), default=(20, 800), show_envvar=True)
+@click.option("--batch-size", type=int, default=2000, show_envvar=True)
+@click.option("--batch-overlap", type=int, default=150, show_envvar=True)
+@click.option("--burn-frames", type=int, default=500, show_envvar=True)
+@click.option("--valid-height-range", type=(float, float), default=(10, 800), show_envvar=True)
 @click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
 @click.option("--registration-max-correspondence-distance", type=float, default=1.0, show_envvar=True)
-@click.option("--registration-fitness-threshold", type=float, default=.35, show_envvar=True)
-@click.option("--registration-reference-future-len", type=int, default=300, show_envvar=True)
-@click.option("--registration-reference-history-len", type=int, default=200, show_envvar=True)
-@click.option("--registration-cleanup-nbs", type=int, default=9, show_envvar=True)
+@click.option("--registration-fitness-threshold", type=float, default=.25, show_envvar=True)
+@click.option("--registration-reference-future-len", type=int, default=100, show_envvar=True)
+@click.option("--registration-reference-history-len", type=int, default=50, show_envvar=True)
+@click.option("--registration-cleanup-nbs", type=int, default=5, show_envvar=True)
 @click.option("--registration-cleanup-nbs-combined", type=int, default=15, show_envvar=True)
 @click.option("--reproject-stitch-buffer", type=int, default=400, show_envvar=True)
 @click.option("--reproject-interpolation-distance-threshold", type=float, default=1.75, show_envvar=True)
@@ -55,6 +55,7 @@ def cli_registration(
     reproject_smooth_kernel,
     reproject_smooth_kernel_bpoint,
 ):
+
     registration_kwargs = {
         "max_correspondence_distance": registration_max_correspondence_distance,
         "fitness_threshold": registration_fitness_threshold,
