@@ -112,14 +112,16 @@ def convert_depth_to_pcl_and_register(
     pcl_f = h5py.File(os.path.join(registration_dir, "pcls.hdf5"), "w")
     pcl_f.create_dataset(
         "xyz",
-        (len(use_ts) * 4e3, 3),
+        (len(use_ts) * 8e3, 3),
         "float64",
+        maxshape=(None, 3),
         compression="lzf",
     )
     pcl_f.create_dataset(
         "frame_index",
-        (len(use_ts) * 4e3,),
+        (len(use_ts) * 8e3,),
         "uint32",
+        maxshape=(None,),
         compression="lzf",
     )
     pcl_f.create_dataset("reference_node", (len(use_ts),), str_dt, compression="lzf")

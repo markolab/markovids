@@ -9,14 +9,14 @@ def cli():
 
 
 # fmt: off
-@cli.command(name="registration", context_settings={"show_default": True})
-@click.argument("data_dir", type=click.Path(exists=True), help="Directory with dat/avi files")
+@cli.command(name="registration", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_REG"})
+@click.argument("data_dir", type=click.Path(exists=True))
 @click.option("--registration-dir", type=str, default="_registration", help="Directory for output", show_envvar=True)
-@click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", help="Path to intrinsics file")
+@click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
 @click.option("--segmentation-dir", type=str, default="_segmentation_tau-5", show_envvar=True)
 @click.option("--background-spacing", type=int, default=500, show_envvar=True)
-@click.option("--batch-size", type=int, default=2000, show_envvar=True)
-@click.option("--batch-overlap", type=int, default=200, show_envvar=True)
+@click.option("--batch-size", type=int, default=3000, show_envvar=True)
+@click.option("--batch-overlap", type=int, default=300, show_envvar=True)
 @click.option("--burn-frames", type=int, default=200, show_envvar=True)
 @click.option("--valid-height-range", type=(float, float), default=(20, 800), show_envvar=True)
 @click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
@@ -36,6 +36,7 @@ def cli_registration(
     data_dir,
     registration_dir,
     intrinsics_file,
+    segmentation_dir,
     background_spacing,
     batch_size,
     batch_overlap,
@@ -63,10 +64,13 @@ def cli_registration(
         "cleanup_nbs_combined": registration_cleanup_nbs_combined,
     }
 
+    print(f"Processing {data_dir}")
+
     convert_depth_to_pcl_and_register(
         data_dir,
         intrinsics_file,
         registration_dir=registration_dir,
+        segmentation_dir=segmentation_dir,
         background_spacing=background_spacing,
         batch_size=batch_size,
         batch_overlap=batch_overlap,
