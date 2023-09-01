@@ -15,6 +15,7 @@ dependencies = [
 	"matplotlib",
 	"scikit-image",
 	"scipy",
+	"toml",
 	"tqdm",
 ]
 
