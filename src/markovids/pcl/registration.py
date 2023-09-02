@@ -38,7 +38,7 @@ class DepthVideoPairwiseRegister:
         cleanup_radius=3.0,
         cleanup_nbs_combined=21,
         cleanup_radius_combined=3.0,
-        z_shift=False,
+        z_shift=True,
         nsig=2,
     ):
         self.pairwise_registration_options = {
@@ -150,9 +150,8 @@ class DepthVideoPairwiseRegister:
             ):
                 reference_node_proposal = reference_node
             else:
-                # if someone crossed threshold just take max npoints...
-                # note we used the smoothed weights before...
-                reference_node_proposal = max(npoints, key=npoints.get)
+                weights_diff[reference_node] = -np.inf # exclude ref.
+                reference_node_proposal = max(weights_diff, key=npoints.get)
 
             # weights_minus_ci = {_cam: self.weights_minus_ci[_cam][_frame] for _cam in cams}
             # reference_node_proposal = max(weights, key=weights.get)
@@ -260,6 +259,7 @@ def pairwise_registration(
     init_transformation: np.ndarray = np.identity(4),
     estimation: o3d.pipelines.registration.TransformationEstimation = default_estimation,
     compute_information=True,
+    z_shift=True,
 ):
     if init_transformation is None:
         init_transformation = np.eye(4)
@@ -276,11 +276,14 @@ def pairwise_registration(
         estimation,
         criteria,
     )
+    transform = np.array(_result.transformation)
+    if not z_shift:
+        transform[2,3] = 0
 
     dct = {
         "fitness": _result.fitness,
         "inlier_rmse": _result.inlier_rmse,
-        "transformation": np.array(_result.transformation),
+        "transformation": transform,
     }
 
     if compute_information:
