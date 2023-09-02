@@ -11,7 +11,8 @@ default_criteria = o3d.pipelines.registration.ICPConvergenceCriteria(
     relative_fitness=1e-3, relative_rmse=1e-3, max_iteration=int(100)
 )
 
-default_estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint()
+# NO SCALING
+default_estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint(with_scaling=False)
 
 
 # TODO need rules to prevent body parts from getting clipped due to

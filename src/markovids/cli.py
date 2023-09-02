@@ -8,6 +8,7 @@ def cli():
     pass
 
 
+# TODO: change point cloud merging to reduce scale changes...
 # fmt: off
 @cli.command(name="registration", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_REG"})
 @click.argument("data_dir", type=click.Path(exists=True))
