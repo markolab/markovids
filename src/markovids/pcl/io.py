@@ -163,6 +163,9 @@ def depth_from_pcl_interpolate(
     except AttributeError:
         points = np.asarray(pcl.points)
 
+    # only include valid points...
+    points = points[~np.isnan(points).any(axis=1)]
+
     # tic = time.process_time()
     depth_image = np.full((height, width), np.nan)
 
