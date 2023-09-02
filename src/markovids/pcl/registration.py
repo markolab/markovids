@@ -130,7 +130,7 @@ class DepthVideoPairwiseRegister:
             npoints = {_cam: self.npoints[_cam][_frame] for _cam in cams}
             if _frame > 0:
                 npoints_retain = {
-                    _cam: self.npoints[_cam][_frame] / self.npoints[_cam][_frame - 1]
+                    _cam: self.npoints[_cam][_frame] / (self.npoints[_cam][_frame - 1] + 1e-3)
                     for _cam in cams
                 }
             else:
