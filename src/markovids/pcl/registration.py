@@ -12,7 +12,9 @@ default_criteria = o3d.pipelines.registration.ICPConvergenceCriteria(
 )
 
 # NO SCALING
-default_estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint(with_scaling=False)
+default_estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint(
+    with_scaling=False
+)
 
 
 # TODO need rules to prevent body parts from getting clipped due to
@@ -25,22 +27,25 @@ class DepthVideoPairwiseRegister:
         fitness_threshold=0.3,
         current_reference_weight=1.0,
         reference_debounce=0,
-        reference_min_npoints=3000,
-        reference_future_len=300,
-        reference_history_len=200,
+        reference_min_npoints=2000,
+        reference_future_len=75,
+        reference_history_len=25,
         reference_medfilt=21,
+        reference_min_fraction=0.5,
         pairwise_criteria=default_criteria,
         pairwise_estimation=default_estimation,
         cleanup_nbs=21,
         cleanup_radius=3.0,
         cleanup_nbs_combined=21,
         cleanup_radius_combined=3.0,
+        z_shift=False,
         nsig=2,
     ):
         self.pairwise_registration_options = {
             "max_correspondence_distance": max_correspondence_distance,
             "criteria": pairwise_criteria,
             "estimation": pairwise_estimation,
+            "z_shift": z_shift,
         }
         self.min_npoints = min_npoints
         self.fitness_threshold = fitness_threshold
@@ -54,8 +59,10 @@ class DepthVideoPairwiseRegister:
         self.reference_future = reference_future_len
         self.reference_medfilt = reference_medfilt
         self.reference_min_npoints = reference_min_npoints
+        self.reference_min_fraction = reference_min_fraction
         self.weights = None
         self.nsig = nsig
+        # self.z_shift = z_shift
 
     def get_reference_node_weights(self, pcls):
         cams = list(pcls.keys())
@@ -66,13 +73,19 @@ class DepthVideoPairwiseRegister:
         # npoints_mask = signal.medfilt((npoints_arr_raw > self.reference_min_npoints).astype("uint8"), (self.reference_medfilt,1))
         npoints_pd = {k: pd.Series(v) for k, v in npoints.items()}
         npoints_mu = {
-            k: (v.rolling(self.reference_history, 1).mean().to_numpy()
-            + v[::-1].rolling(self.reference_future, 1).mean().to_numpy()[::-1]) / 2.
+            k: (
+                v.rolling(self.reference_history, 1).mean().to_numpy()
+                + v[::-1].rolling(self.reference_future, 1).mean().to_numpy()[::-1]
+            )
+            / 2.0
             for k, v in npoints_pd.items()
         }
         npoints_sig = {
-            k: (v.rolling(self.reference_history, 1).std().to_numpy()
-            + v[::-1].rolling(self.reference_future, 1).std().to_numpy()[::-1]) / 2.
+            k: (
+                v.rolling(self.reference_history, 1).std().to_numpy()
+                + v[::-1].rolling(self.reference_future, 1).std().to_numpy()[::-1]
+            )
+            / 2.0
             for k, v in npoints_pd.items()
         }
         self.weights_mu = npoints_mu
@@ -114,19 +127,36 @@ class DepthVideoPairwiseRegister:
             # if the target object is missing, simply reference camera against previous transform
 
             # npoints = {_cam: len(pcls[_cam][_frame].points) for _cam in cams}
-            # npoints = {_cam: self.npoints[_cam][_frame] for _cam in cams}
+            npoints = {_cam: self.npoints[_cam][_frame] for _cam in cams}
+            if _frame > 0:
+                npoints_retain = {
+                    _cam: self.npoints[_cam][_frame] / self.npoints[_cam][_frame - 1]
+                    for _cam in cams
+                }
+            else:
+                npoints_retain = {_cam: 1 for _cam in cams}
+
             weights_diff = {
-                _cam: self.weights_minus_ci[_cam][_frame] - self.weights_plus_ci[reference_node][_frame]
+                _cam: self.weights_minus_ci[_cam][_frame]
+                - self.weights_plus_ci[reference_node][_frame]
                 for _cam in cams
             }
             max_diff = max(weights_diff.values())
-            if max_diff <= 0:
+            # use smoothed weights to see if we cross threshold...
+            if (
+                (max_diff <= 0)
+                and (npoints[reference_node] >= self.reference_min_npoints)
+                and (npoints_retain[reference_node] >= self.reference_min_fraction)
+            ):
                 reference_node_proposal = reference_node
             else:
-                reference_node_proposal = max(weights_diff, key=weights_diff.get)
+                # if someone crossed threshold just take max npoints...
+                # note we used the smoothed weights before...
+                reference_node_proposal = max(npoints, key=npoints.get)
+
             # weights_minus_ci = {_cam: self.weights_minus_ci[_cam][_frame] for _cam in cams}
             # reference_node_proposal = max(weights, key=weights.get)
-            
+
             if (reference_node_proposal != reference_node) and (
                 reference_node_proposal == previous_reference_node_proposal
             ):
@@ -313,7 +343,6 @@ def correct_breakpoints(
             if _ref_node != cur_node:
                 next_break = i
                 break
-        
 
         # extrapolate new positions
         # for now linear is probably fine...
@@ -328,7 +357,7 @@ def correct_breakpoints(
                 c1 = np.array(np.median(use_pcl.points, axis=0))
                 df = c0 - c1
                 if not z_shift:
-                    df[2] = 0 # null out z shift if we don't want it...
+                    df[2] = 0  # null out z shift if we don't want it...
                 init_transformation[:3, 3] = df
 
                 # potentially downweight any z-shifts, those should be 0...
@@ -362,7 +391,7 @@ def correct_breakpoints_extrapolate(
     reference_nodes,
     extrapolate_history=5,
     poly_deg=1,
-    z_shift=True,
+    z_shift=False,
 ):
     breakpoints = []
     transforms = []
@@ -389,14 +418,14 @@ def correct_breakpoints_extrapolate(
             target_pcl = combined_pcl[_bpoint - j]
             centroids.append(np.array(np.median(target_pcl.points, axis=0)))
 
-        centroid_array = np.array(centroids) # should be t x 3 (x, y, z)
+        centroid_array = np.array(centroids)  # should be t x 3 (x, y, z)
         idx_array = np.arange(extrapolate_history)
         # interpolate target position
         # new_point = idx_array[-1] + 1
         # c0 = np.zeros((3,), dtype="float")
         # for _axis in range(centroid_array.shape[1]):
-            # p = np.polynomial.Polynomial.fit(idx_array, centroid_array[:,_axis], poly_deg)
-            # c0[_axis] = p(new_point)
+        # p = np.polynomial.Polynomial.fit(idx_array, centroid_array[:,_axis], poly_deg)
+        # c0[_axis] = p(new_point)
 
         # take median vel and use to project next point...
         df = np.median(np.diff(centroid_array, axis=0), axis=0)

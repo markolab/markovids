@@ -235,7 +235,7 @@ def convert_depth_to_pcl_and_register(
             c0 = np.array(np.median(last_pcl.points, axis=0))
             c1 = np.array(np.median(pcls_combined[0].points, axis=0))
             df = c0 - c1
-            df[2] = 0.0
+            df[2] = 0.0 # no z-shift
             use_transformation[:3, 3] = df
             last_bpoint_transform = use_transformation
             # fix only up until the next break point
@@ -248,7 +248,7 @@ def convert_depth_to_pcl_and_register(
             pcls_combined,
             registration.reference_node,
             # registration_kwargs["max_correspondence_distance"],
-            z_shift=True,  # I would set to false if we're not using extrapolate
+            z_shift=False,  # I would set to false if we're not using extrapolate
         )
         
         # bpoints = []
@@ -397,6 +397,7 @@ def reproject_pcl_to_depth(
         for i, _pcl_idx in enumerate(read_pcls):
             pcl_read_idx = np.flatnonzero(_pcl_idx == use_coord_index) + adj
             xyz = pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1])]
+            xyz = xyz[~np.isnan(xyz).any(axis=1)] # remove nans
             _pcl = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
             if len(_pcl.points) < 10:
                 _new_im = np.zeros((stitch_size[1], stitch_size[0]), dtype="uint16")
