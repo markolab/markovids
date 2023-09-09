@@ -8,12 +8,18 @@ from scipy import signal
 
 
 default_criteria = o3d.pipelines.registration.ICPConvergenceCriteria(
-    relative_fitness=1e-3, relative_rmse=1e-3, max_iteration=int(100)
+    relative_fitness=1e-6, relative_rmse=1e-6, max_iteration=int(100)
 )
 
 # NO SCALING
-default_estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint(
+default_estimation_p2p = o3d.pipelines.registration.TransformationEstimationPointToPoint(
     with_scaling=False
+)
+default_estimation_p2pl = o3d.pipelines.registration.TransformationEstimationPointToPlane(
+    # with_scaling=False
+)
+default_estimation_general = o3d.pipelines.registration.TransformationEstimationForGeneralizedICP(
+    epsilon=1e-3
 )
 
 
@@ -32,8 +38,9 @@ class DepthVideoPairwiseRegister:
         reference_history_len=25,
         reference_medfilt=21,
         reference_min_fraction=0.5,
-        pairwise_criteria=default_criteria,
-        pairwise_estimation=default_estimation,
+        registration_type="p2p",
+        # pairwise_criteria=default_criteria,
+        # pairwise_estimation=default_estimation,
         cleanup_nbs=21,
         cleanup_radius=3.0,
         cleanup_nbs_combined=21,
@@ -41,6 +48,18 @@ class DepthVideoPairwiseRegister:
         z_shift=True,
         nsig=2,
     ):
+        if registration_type.lower() == "p2p":
+            pairwise_criteria = default_criteria
+            pairwise_estimation= default_estimation_p2p
+        elif registration_type.lower() == "p2pl":
+            pairwise_criteria = default_criteria
+            pairwise_estimation= default_estimation_p2pl
+        elif registration_type.lower() == "generalized":
+            pairwise_criteria = default_criteria
+            pairwise_estimation= default_estimation_general
+        else:
+            raise RuntimeError(f"Did not understand registration type {registration_type}") 
+        
         self.pairwise_registration_options = {
             "max_correspondence_distance": max_correspondence_distance,
             "criteria": pairwise_criteria,
@@ -257,7 +276,7 @@ def pairwise_registration(
     max_correspondence_distance: float = 0.005,
     criteria: o3d.pipelines.registration.ICPConvergenceCriteria = default_criteria,
     init_transformation: np.ndarray = np.identity(4),
-    estimation: o3d.pipelines.registration.TransformationEstimation = default_estimation,
+    estimation: o3d.pipelines.registration.TransformationEstimation = default_estimation_p2p,
     compute_information=True,
     z_shift=True,
 ):
@@ -268,14 +287,27 @@ def pairwise_registration(
         df = c0 - c1
         init_transformation[:3, 3] = df
 
-    _result = o3d.pipelines.registration.registration_icp(
-        source,
-        target,
-        max_correspondence_distance,
-        init_transformation,
-        estimation,
-        criteria,
-    )
+    if type(estimation).__name__ in ["TransformationEstimationPointToPoint", "TransformationEstimationPointToPlane"]:
+        _result = o3d.pipelines.registration.registration_icp(
+            source,
+            target,
+            max_correspondence_distance,
+            init_transformation,
+            estimation,
+            criteria,
+        )
+    elif type(estimation).__name__ == "TransformationEstimationForGeneralizedICP":
+        _result = o3d.pipelines.registration.registration_generalized_icp(
+            source,
+            target,
+            max_correspondence_distance,
+            init_transformation,
+            estimation,
+            criteria, 
+        )
+    else:
+        RuntimeError(f"Did not understand registration type: {estimation.__name__}")
+
     transform = np.array(_result.transformation)
     if not z_shift:
         transform[2,3] = 0
@@ -417,7 +449,7 @@ def correct_breakpoints_extrapolate(
         # for now linear is probably fine...
         use_pcl = combined_pcl[_bpoint]
         centroids = []
-        for j in range(1, extrapolate_history + 1):
+        for j in range(extrapolate_history, 0, -1):
             target_pcl = combined_pcl[_bpoint - j]
             centroids.append(np.array(np.median(target_pcl.points, axis=0)))
 

@@ -5,7 +5,7 @@ import numpy as np
 def pcl_from_depth(
     depth_image,
     intrinsic_matrix,
-    estimate_normals=False,
+    estimate_normals=True,
     z_scale=4.0,
     is_tensor=False,
     project_xy=True,
@@ -201,7 +201,8 @@ def depth_from_pcl_interpolate(
     
     # print(f"Step 2 {time.process_time() - tic}")
     # tic = time.process_time()
-    
+    # https://stackoverflow.com/questions/28506050/understanding-inputs-and-outputs-on-scipy-ndimage-map-coordinates
+    # test jax version as welll, we're spending so much time interpolating... 
     try:
         new_depth_image = griddata(
             (u, v), z, (xx, yy), method=interpolation_method, fill_value=fill_value
@@ -213,7 +214,10 @@ def depth_from_pcl_interpolate(
     # print(f"Step 3 {time.process_time() - tic}")
     # tic = time.process_time()
     
-    # https://stackoverflow.com/questions/30655749/how-to-set-a-maximum-distance-between-points-for-interpolation-when-using-scipydepth_image =
+    # alternatively, could mask the output...
+    # https://stackoverflow.com/questions/32272004/interpolation-of-numpy-array-with-a-maximum-interpolation-distance
+
+    # https://stackoverflow.com/questions/30655749/how-to-set-a-maximum-distance-between-points-for-interpolation-when-using-scipy
     tree = cKDTree(np.vstack([u, v]).T)  # feed this in from elsewhere...
     xi = _ndim_coords_from_arrays((xx, yy))  # can also precook this...
     dists, indexes = tree.query(xi) 

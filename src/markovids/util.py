@@ -53,7 +53,9 @@ def convert_depth_to_pcl_and_register(
     batch_overlap: int = 150,
     voxel_down_sample: float = 1.0,
     pcl_kwargs: dict = {},
+    breakpoint_extrapolate_history: int = 5,
     registration_kwargs: dict = {},
+    breakpoint_z_shift: bool = False,
 ):
     pcl_kwargs = pcl_kwargs_default | pcl_kwargs
     registration_kwargs = registration_kwargs_default | registration_kwargs
@@ -151,7 +153,7 @@ def convert_depth_to_pcl_and_register(
     all_bpoints = []
     pcl_count = 0
     last_bpoint_transform = None
-    last_pcl = None
+    last_pcl_batch = None
     last_reference_node = None
 
     for batch in tqdm(frame_batches, desc="Conversion to PCL and registration"):
@@ -225,17 +227,26 @@ def convert_depth_to_pcl_and_register(
             # only apply transformation for the current cam
             for i in range(next_break):
                 pcls_combined[i] = pcls_combined[i].transform(last_bpoint_transform)
-        elif (last_pcl is not None) and (
+        elif (last_pcl_batch is not None) and (
             last_reference_node != registration.reference_node[0]
         ):
-            # TODO: add to list of bpoint transitions for smoothing...
-            # if not recompute and apply to all data...
-            # theoretically we could also extrapolate
-            use_transformation = np.eye(4)
-            c0 = np.array(np.median(last_pcl.points, axis=0))
+            centroids = []
+            for i in range(breakpoint_extrapolate_history):
+                target_pcl = last_pcl_batch[i]
+                centroids.append(np.array(np.median(target_pcl.points, axis=0)))
+            centroid_array = np.array(centroids)  # should be t x 3 (x, y, z)
+            # take median vel and use to project next point...
+            df = np.median(np.diff(centroid_array, axis=0), axis=0)
+            # target position
+            c0 = centroid_array[-1] + df
+            
+            # source position
             c1 = np.array(np.median(pcls_combined[0].points, axis=0))
             df = c0 - c1
-            df[2] = 0.0 # no z-shift
+            if not breakpoint_z_shift:
+                df[2] = 0.0
+
+            use_transformation = np.eye(4)
             use_transformation[:3, 3] = df
             last_bpoint_transform = use_transformation
             # fix only up until the next break point
@@ -247,16 +258,14 @@ def convert_depth_to_pcl_and_register(
         bpoints, frame_groups, bpoint_transforms = correct_breakpoints_extrapolate(
             pcls_combined,
             registration.reference_node,
-            # registration_kwargs["max_correspondence_distance"],
-            z_shift=False,  # I would set to false if we're not using extrapolate
+            extrapolate_history=breakpoint_extrapolate_history,
+            z_shift=breakpoint_z_shift,  # I would set to false if we're not using extrapolate
         )
         
-        # bpoints = []
-        # bpoint_transforms = []
         if len(bpoints) > 0:
             last_bpoint_transform = bpoint_transforms[-1]
         
-        last_pcl = pcls_combined[-1]
+        last_pcl_batch = pcls_combined[-breakpoint_extrapolate_history:]
         last_reference_node = registration.reference_node[-1]
 
         _tmp = [np.asarray(pcl.points) for pcl in pcls_combined]
@@ -287,7 +296,7 @@ def convert_depth_to_pcl_and_register(
             pcl_f["xyz"].resize(pcl_count + npoints, axis=0)
             pcl_f["frame_index"].resize(pcl_count + npoints, axis=0)
             pcl_f["xyz"][pcl_count : pcl_count + npoints, :] = xyz
-            pcl_f["frame_index"][pcl_count : pcl_count + npoints, :] = pcl_idx
+            pcl_f["frame_index"][pcl_count : pcl_count + npoints] = pcl_idx
 
         pcl_f["reference_node"][batch:right_edge_no_pad] = registration.reference_node
 
@@ -313,7 +322,7 @@ def convert_depth_to_pcl_and_register(
 
 
 def reproject_pcl_to_depth(
-    registration_dir: str,
+    registration_file: str,
     intrinsics_file: str,
     crop_pad: int = 50,
     stitch_buffer: int = 400,
@@ -330,10 +339,15 @@ def reproject_pcl_to_depth(
     smooth_kernel_bpoint: Tuple[float, float, float] = (2.0, 1.5, 1.5),
     visualize_results: bool = True,
 ):
-    # registration_dir = os.path.dirname(registration_file)
-    session_name = os.path.normpath(os.path.dirname(registration_dir)).split(os.sep)[-1]
-    print(f"Session: {session_name}")
+    
+    save_metadata = locals()
+    save_metadata["complete"] = False
+
+    # session_name = os.path.normpath(os.path.dirname(registration_dir)).split(os.sep)[-1]
+    # print(f"Session: {session_name}")
     # session name is two levels down...
+    registration_dir = os.path.dirname(registration_file)
+    registration_fname, ext = os.path.splitext(registration_file)
     intrinsics = toml.load(intrinsics_file)
     intrinsics_matrix, distortion_coeffs = format_intrinsics(intrinsics)
 
@@ -344,7 +358,8 @@ def reproject_pcl_to_depth(
         1 / metadata["camera_metadata"][cameras[0]]["Scan3dCoordinateScale"]
     )  # assume this is common for now
 
-    registration_file = os.path.join(registration_dir, f"{session_name}.hdf5")
+    # registration_file = os.path.join(registration_dir, f"{session_name}.hdf5")
+
     pcl_f = h5py.File(os.path.join(registration_dir, "pcls.hdf5"), "r")
     pcl_metadata = toml.load(os.path.join(registration_dir, "pcls.toml"))
     all_bpoints = pcl_f["bpoints"][()]
@@ -399,14 +414,20 @@ def reproject_pcl_to_depth(
             xyz = pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1])]
             xyz = xyz[~np.isnan(xyz).any(axis=1)] # remove nans
             _pcl = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
+            # in the merged point cloud it doesn't make sense to use camera-specific
+            # parameters, default to using parameters from the first cam in the intrinsics
+            # file
             if len(_pcl.points) < 10:
                 _new_im = np.zeros((stitch_size[1], stitch_size[0]), dtype="uint16")
             else:
                 _new_im = depth_from_pcl_interpolate(
                     _pcl,
-                    intrinsics_matrix[reference_node[i]],
-                    z_adjust=floor_distances[reference_node[i]],
-                    post_z_shift=floor_distances[reference_node[i]],
+                    # intrinsics_matrix[reference_node[i]],
+                    intrinsics_matrix[cameras[0]], # use first camera across all frames for consistency
+                    # z_adjust=floor_distances[reference_node[i]],
+                    z_adjust=floor_distances[cameras[0]],
+                    # post_z_shift=floor_distances[reference_node[i]],
+                    post_z_shift=floor_distances[cameras[0]],
                     width=stitch_size[0],
                     height=stitch_size[1],
                     distance_threshold=interpolation_distance_threshold,
@@ -438,6 +459,7 @@ def reproject_pcl_to_depth(
 
     ynonzero = np.flatnonzero(yproj > 0)
     xnonzero = np.flatnonzero(xproj > 0)
+
     ycrop = next_even_number(max(min(ynonzero) - crop_pad, 0)), prev_even_number(
         min(max(ynonzero) + crop_pad, max_proj.shape[0])
     )
@@ -492,7 +514,7 @@ def reproject_pcl_to_depth(
 
     if visualize_results:
         writer = MP4WriterPreview(
-            os.path.join(registration_dir, f"{session_name}.mp4"),
+            f"{registration_fname}.mp4",
             frame_size=(crop_size[1], crop_size[0]),
             fps=fps,
             cmap="turbo",
@@ -511,6 +533,11 @@ def reproject_pcl_to_depth(
             )
 
         writer.close()
+
+    save_metadata["complete"] = True
+    with open(f"{registration_fname}.toml", "w") as f:
+        toml.dump(save_metadata, f)
+    
 
 
 def next_even_number(x):
