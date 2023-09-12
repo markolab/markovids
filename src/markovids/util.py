@@ -8,12 +8,18 @@ from markovids.vid.io import (
 )
 from markovids.depth.plane import get_floor
 from markovids.depth.io import load_segmentation_masks
-from markovids.pcl.io import pcl_from_depth, depth_from_pcl_interpolate
+from markovids.pcl.io import (
+    pcl_from_depth,
+    depth_from_pcl_interpolate,
+    trim_outliers,
+    pcl_to_pxl_coords,
+)
 from markovids.pcl.registration import (
     DepthVideoPairwiseRegister,
     correct_breakpoints,
     correct_breakpoints_extrapolate,
 )
+from collections import defaultdict
 from tqdm.auto import tqdm
 from scipy import ndimage
 import os
@@ -53,9 +59,7 @@ def convert_depth_to_pcl_and_register(
     batch_overlap: int = 150,
     voxel_down_sample: float = 1.0,
     pcl_kwargs: dict = {},
-    breakpoint_extrapolate_history: int = 5,
     registration_kwargs: dict = {},
-    breakpoint_z_shift: bool = False,
 ):
     pcl_kwargs = pcl_kwargs_default | pcl_kwargs
     registration_kwargs = registration_kwargs_default | registration_kwargs
@@ -150,12 +154,7 @@ def convert_depth_to_pcl_and_register(
 
     frame_batches = range(0, nframes, batch_size)
 
-    all_bpoints = []
     pcl_count = 0
-    last_bpoint_transform = None
-    last_pcl_batch = None
-    last_reference_node = None
-
     for batch in tqdm(frame_batches, desc="Conversion to PCL and registration"):
         left_edge = max(batch - batch_overlap, 0)
         left_pad_size = batch - left_edge
@@ -194,7 +193,6 @@ def convert_depth_to_pcl_and_register(
 
         # registration
         registration = DepthVideoPairwiseRegister(**registration_kwargs)
-
         registration.get_transforms(pcls, progress_bar=False)
         pcls_combined = registration.combine_pcls(pcls, progress_bar=False)
 
@@ -207,79 +205,12 @@ def convert_depth_to_pcl_and_register(
             left_pad_size : right_edge_no_pad - left_edge
         ]
 
-        # we need to know when we have another cam shift
-        cur_node = registration.reference_node[0]
-        next_break = len(registration.reference_node)
-
-        for i, _ref_node in enumerate(registration.reference_node):
-            if _ref_node != cur_node:
-                next_break = i # when we switch cams
-                break
-        
-        # need to correct breaks across batch transitions...
-        # STORE LAST TRANSFORM AND REFERENCE NODE, IF THEY MATCH APPLY TRANSFORM
-        # IF THEY DON'T COMPUTE NEW ONE...
-        batch_bpoint = False
-        if (last_bpoint_transform is not None) and (
-            last_reference_node == registration.reference_node[0]
-        ):
-            # simply apply the last transform if the reference node matches...
-            # only apply transformation for the current cam
-            for i in range(next_break):
-                pcls_combined[i] = pcls_combined[i].transform(last_bpoint_transform)
-        elif (last_pcl_batch is not None) and (
-            last_reference_node != registration.reference_node[0]
-        ):
-            centroids = []
-            for i in range(breakpoint_extrapolate_history):
-                target_pcl = last_pcl_batch[i]
-                centroids.append(np.array(np.median(target_pcl.points, axis=0)))
-            centroid_array = np.array(centroids)  # should be t x 3 (x, y, z)
-            # take median vel and use to project next point...
-            df = np.median(np.diff(centroid_array, axis=0), axis=0)
-            # target position
-            c0 = centroid_array[-1] + df
-            
-            # source position
-            c1 = np.array(np.median(pcls_combined[0].points, axis=0))
-            df = c0 - c1
-            if not breakpoint_z_shift:
-                df[2] = 0.0
-
-            use_transformation = np.eye(4)
-            use_transformation[:3, 3] = df
-            last_bpoint_transform = use_transformation
-            # fix only up until the next break point
-            # as a general rule 
-            for i in range(next_break):
-                pcls_combined[i] = pcls_combined[i].transform(use_transformation)
-            batch_bpoint = True
-
-        bpoints, frame_groups, bpoint_transforms = correct_breakpoints_extrapolate(
-            pcls_combined,
-            registration.reference_node,
-            extrapolate_history=breakpoint_extrapolate_history,
-            z_shift=breakpoint_z_shift,  # I would set to false if we're not using extrapolate
-        )
-        
-        if len(bpoints) > 0:
-            last_bpoint_transform = bpoint_transforms[-1]
-        
-        last_pcl_batch = pcls_combined[-breakpoint_extrapolate_history:]
-        last_reference_node = registration.reference_node[-1]
-
         _tmp = [np.asarray(pcl.points) for pcl in pcls_combined]
         xyz = np.concatenate(_tmp)
         npoints = xyz.shape[0]
         frame_index = cur_ts.index[
             left_pad_size : right_edge_no_pad - left_edge
         ].to_numpy()  # make sure we can make back to og timestamp
-
-        bpoints = [frame_index[_bpoint] for _bpoint in bpoints]
-        if batch_bpoint:
-            bpoints = [
-                frame_index[0]
-            ] + bpoints  # add first index if we have a breakpoint in the first frame
 
         assert len(frame_index) == len(pcls_combined)
 
@@ -301,31 +232,123 @@ def convert_depth_to_pcl_and_register(
         pcl_f["reference_node"][batch:right_edge_no_pad] = registration.reference_node
 
         pcl_count += npoints
-        all_bpoints += bpoints
-        # all_reference_node += registration.reference_node
         del pcls_combined
         del raw_dat
         del roi_dats
         gc.collect()
 
-    pcl_f.create_dataset("bpoints", data=np.array(all_bpoints).astype("uint32"))
+    # pcl_f.create_dataset("bpoints", data=np.array(all_bpoints).astype("uint32"))
     if pcl_f["xyz"].shape[0] > pcl_count:
         pcl_f["xyz"].resize(pcl_count, axis=0)
         pcl_f["frame_index"].resize(pcl_count, axis=0)
-
-    # store other attrs for downstream processing?
 
     pcl_f.close()
     save_metadata["complete"] = True
     with open(os.path.join(registration_dir, "pcls.toml"), "w") as f:
         toml.dump(save_metadata, f)
 
+    # FIX BREAKPOINTS DOWNSTREAM, AVERAGE ACROSS CAMERA COMBINATIONS
+
+
+def fix_breakpoints(
+    pcl_file: str,
+):
+    pcl_f = h5py.File(pcl_file, "r+")
+    # now we need to determine points where we switched references and correct...
+    pcl_coord_idx = pcl_f["frame_index"][()]
+    pcl_frame_idx = np.unique(pcl_coord_idx)
+    npcls = len(pcl_frame_idx)
+
+    target = pcl_f["reference_node"][0].decode()
+    transforms = defaultdict(list)
+    for i in tqdm(range(len(pcl_f["reference_node"])), desc="Finding breakpoints..."):
+        source = pcl_f["reference_node"][i].decode()
+        if source != target:
+            transforms[(target, source)].append(pcl_frame_idx[i])
+        target = source
+
+    all_bpoints = np.concatenate(list(transforms.values()))
+    all_bpoints = all_bpoints[all_bpoints.argsort()]
+
+    # store for later, may need to nan out
+    pcl_f.create_dataset("bpoints", data=all_bpoints, compression="lzf")
+
+    transform_list = []
+    for (target, source), pcl_idxs in tqdm(transforms.items(), desc="Getting transforms"):
+        diffs = []
+        frame_group = []
+
+        for _idx in pcl_idxs:
+            # target is - 1
+            # source is 0
+            next_frame = max(pcl_frame_idx)
+            try:
+                next_frame = np.min(all_bpoints[all_bpoints > _idx])
+            except:
+                next_frame = max(pcl_frame_idx)
+
+            target_read_idx = np.flatnonzero(
+                pcl_coord_idx == np.max(pcl_frame_idx[pcl_frame_idx < _idx])
+            )
+            source_read_idx = np.flatnonzero(pcl_coord_idx == _idx)
+
+            # use neighboring frames to we don't mess up???
+            source_xyz = pcl_f["xyz"][slice(source_read_idx[0], source_read_idx[-1])]
+            source_xyz = source_xyz[~np.isnan(source_xyz).any(axis=1)]  # remove nans
+            source_xyz = trim_outliers(source_xyz)
+
+            target_xyz = pcl_f["xyz"][slice(target_read_idx[0], target_read_idx[-1])]
+            target_xyz = target_xyz[~np.isnan(target_xyz).any(axis=1)]  # remove nans
+            target_xyz = trim_outliers(target_xyz)
+
+            diffs.append(np.median(target_xyz, axis=0) - np.median(source_xyz, axis=0))
+            # inclusive left hand range
+            # exclusive right hand (cuts into next transition)
+            matches = pcl_frame_idx[
+                np.logical_and(pcl_frame_idx >= _idx, pcl_frame_idx < next_frame)
+            ]
+            frame_group.append(matches)
+
+        # alternatively we can get a different transform for each one
+        # except we aggressively trim outliers
+        diffs = np.array(diffs)
+        use_transform = np.eye(4)
+        use_transform[:3, 3] = np.median(diffs, axis=0)
+        use_transform[2, 3] = 0
+
+        for _group in frame_group:
+            transform_list.append(
+                {
+                    "start": _group[0],
+                    "stop": _group[-1],
+                    "transform": use_transform,
+                    "pcl_idxs": _group,
+                }
+            )
+
+    idxsort = np.array([_["start"] for _ in transform_list]).argsort()
+    sorted_transform_list = [transform_list[i] for i in idxsort]
+    odometry = np.eye(4)
+
+    for i in tqdm(range(len(sorted_transform_list)), desc="Correcting breakpoints"):
+        odometry = odometry @ sorted_transform_list[i]["transform"]
+        # align everything
+        read_pcls = sorted_transform_list[i]["pcl_idxs"]
+        mask_array = (pcl_coord_idx >= min(read_pcls)) & (pcl_coord_idx <= max(read_pcls))
+        adj = np.min(np.flatnonzero(mask_array))
+        use_coord_index = pcl_coord_idx[mask_array]
+        for _pcl_idx in read_pcls:
+            pcl_read_idx = np.flatnonzero(_pcl_idx == use_coord_index) + adj
+            xyz = pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)]
+            _pcl = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
+            _pcl = _pcl.transform(odometry)
+            pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)] = np.asarray(_pcl.points)
+
 
 def reproject_pcl_to_depth(
     registration_file: str,
     intrinsics_file: str,
-    crop_pad: int = 50,
-    stitch_buffer: int = 400,
+    stitch_buffer: int = 10,
     batch_size: int = 2000,
     batch_overlap: int = 50,
     interpolation_distance_threshold: float = 1.75,
@@ -333,13 +356,10 @@ def reproject_pcl_to_depth(
     interpolation_fill_value: float = np.nan,
     z_clip: float = 0,
     project_xy: bool = True,
-    bpoint_smooth_window: Tuple[int, int] = (50, 50),
-    bpoint_retain_window: Tuple[int, int] = (10, 10),
     smooth_kernel: Tuple[float, float, float] = (1.0, 0.75, 0.75),
-    smooth_kernel_bpoint: Tuple[float, float, float] = (2.0, 1.5, 1.5),
     visualize_results: bool = True,
+    centroid_outlier_trim_nsigma: int = 6,
 ):
-    
     save_metadata = locals()
     save_metadata["complete"] = False
 
@@ -350,7 +370,6 @@ def reproject_pcl_to_depth(
     registration_fname, ext = os.path.splitext(registration_file)
     intrinsics = toml.load(intrinsics_file)
     intrinsics_matrix, distortion_coeffs = format_intrinsics(intrinsics)
-
     cameras = list(intrinsics_matrix.keys())
     metadata = toml.load(os.path.join(registration_dir, "..", "metadata.toml"))
     fps = np.round(metadata["camera_metadata"][cameras[0]]["AcquisitionFrameRate"])
@@ -358,23 +377,36 @@ def reproject_pcl_to_depth(
         1 / metadata["camera_metadata"][cameras[0]]["Scan3dCoordinateScale"]
     )  # assume this is common for now
 
-    # registration_file = os.path.join(registration_dir, f"{session_name}.hdf5")
-
     pcl_f = h5py.File(os.path.join(registration_dir, "pcls.hdf5"), "r")
     pcl_metadata = toml.load(os.path.join(registration_dir, "pcls.toml"))
-    all_bpoints = pcl_f["bpoints"][()]
     pcl_coord_index = pcl_f["frame_index"][()]
     pcl_frame_index = np.unique(pcl_coord_index)
     npcls = len(pcl_frame_index)
 
-    width, height = (
-        metadata["camera_metadata"][cameras[0]]["Width"],
-        metadata["camera_metadata"][cameras[0]]["Height"],
-    )
-    stitch_size = (
-        width + 2 * stitch_buffer,
-        height + 2 * stitch_buffer,
-    )
+    floor_distances = pcl_metadata["floor_distances"]
+    floor_distances = {k: float(v) for k, v in floor_distances.items()}
+
+    max_batch_size = int(1e7)
+    max_pts = np.nanmax(pcl_f["xyz"][:1], axis=0)
+    min_pts = np.nanmin(pcl_f["xyz"][:1], axis=0)
+    for batch in tqdm(range(0, len(pcl_f["xyz"]), max_batch_size), desc="Getting max"):
+        pts = pcl_f["xyz"][batch : batch + max_batch_size]
+        u, v, z = pcl_to_pxl_coords(
+            pts,
+            intrinsics_matrix[cameras[0]],
+            z_scale=z_scale,
+            post_z_shift=floor_distances[cameras[0]],
+        )
+        new_pts = np.vstack([u, v, z]).T
+        max_pts = np.maximum(max_pts, np.nanmax(new_pts, axis=0))
+        min_pts = np.minimum(min_pts, np.nanmin(new_pts, axis=0))
+
+    buffer = np.floor(np.minimum(min_pts[:2], np.array([0, 0]))).astype("int") * -1
+    buffer += stitch_buffer
+    stitch_size = (next_even_number(max_pts[0] + buffer[0]),
+                   next_even_number(max_pts[1] + buffer[1]))
+
+    print(f"Stitch size {stitch_size}")
 
     depth_f = h5py.File(registration_file, "w")
     depth_f.create_dataset(
@@ -390,7 +422,6 @@ def reproject_pcl_to_depth(
     )
 
     batches = range(0, len(pcl_frame_index), batch_size)
-    max_proj = np.zeros((stitch_size[1], stitch_size[0]), dtype="uint16")
 
     for batch in tqdm(batches, desc="Reproject to depth images"):
         left_edge = batch
@@ -406,13 +437,12 @@ def reproject_pcl_to_depth(
         adj = np.min(np.flatnonzero(mask_array))
         use_coord_index = pcl_coord_index[mask_array]
 
-        floor_distances = pcl_metadata["floor_distances"]
-        floor_distances = {k: float(v) for k, v in floor_distances.items()}
-
         for i, _pcl_idx in enumerate(read_pcls):
             pcl_read_idx = np.flatnonzero(_pcl_idx == use_coord_index) + adj
             xyz = pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1])]
-            xyz = xyz[~np.isnan(xyz).any(axis=1)] # remove nans
+            xyz = xyz[~np.isnan(xyz).any(axis=1)]  # remove nans
+            xyz = trim_outliers(xyz, thresh=centroid_outlier_trim_nsigma)
+
             _pcl = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
             # in the merged point cloud it doesn't make sense to use camera-specific
             # parameters, default to using parameters from the first cam in the intrinsics
@@ -422,11 +452,10 @@ def reproject_pcl_to_depth(
             else:
                 _new_im = depth_from_pcl_interpolate(
                     _pcl,
-                    # intrinsics_matrix[reference_node[i]],
-                    intrinsics_matrix[cameras[0]], # use first camera across all frames for consistency
-                    # z_adjust=floor_distances[reference_node[i]],
+                    intrinsics_matrix[
+                        cameras[0]
+                    ],  # use first camera across all frames for consistency
                     z_adjust=floor_distances[cameras[0]],
-                    # post_z_shift=floor_distances[reference_node[i]],
                     post_z_shift=floor_distances[cameras[0]],
                     width=stitch_size[0],
                     height=stitch_size[1],
@@ -435,6 +464,7 @@ def reproject_pcl_to_depth(
                     interpolation_method=interpolation_method,
                     z_scale=z_scale,
                     z_clip=z_clip,
+                    buffer=buffer,
                     project_xy=project_xy,
                 )
                 _new_im[np.logical_or(np.isnan(_new_im), _new_im < 0)] = 0
@@ -447,97 +477,48 @@ def reproject_pcl_to_depth(
             slice(left_edge, right_edge), slice(0, stitch_size[1]), slice(0, stitch_size[0])
         ] = new_im
         # keep track of max projection for cropping
-        new_max_proj = np.max(new_im, axis=0)
-        max_proj = np.maximum(new_max_proj, max_proj)
 
     # no longer need pcls
     pcl_f.close()
 
     # now crop the data...
-    yproj = np.max(max_proj, axis=1)
-    xproj = np.max(max_proj, axis=0)
-
-    ynonzero = np.flatnonzero(yproj > 0)
-    xnonzero = np.flatnonzero(xproj > 0)
-
-    ycrop = next_even_number(max(min(ynonzero) - crop_pad, 0)), prev_even_number(
-        min(max(ynonzero) + crop_pad, max_proj.shape[0])
-    )
-    xcrop = next_even_number(max(min(xnonzero) - crop_pad, 0)), prev_even_number(
-        min(max(xnonzero) + crop_pad, max_proj.shape[1])
-    )
-
-    depth_f.create_dataset(
-        "frames_crop",
-        (len(pcl_frame_index), ycrop[1] - ycrop[0], xcrop[1] - xcrop[0]),
-        "uint16",
-        compression="lzf",
-    )
-
-    original_size = depth_f["frames"].shape[1:]
-    crop_size = depth_f["frames_crop"].shape[1:]
-
-    print(f"Original size {original_size}, crop size {crop_size}")
-
-    for batch in tqdm(batches, desc="Cropping frames"):
-        left_edge = max(batch - batch_overlap, 0)
-        left_noverlap = batch - left_edge
-        right_edge = min(batch + batch_size, len(pcl_frame_index))
-        cropped_frames = depth_f["frames"][
-            left_edge:right_edge, ycrop[0] : ycrop[1], xcrop[0] : xcrop[1]
-        ]
-        cropped_frames = ndimage.gaussian_filter(cropped_frames, smooth_kernel)
-        depth_f["frames_crop"][batch:right_edge] = cropped_frames[left_noverlap:]
-
-    bpoint_frame_index = [np.flatnonzero(pcl_frame_index == _bpoint)[0] for _bpoint in all_bpoints]
-
-    print(f"Found breakpoints at {bpoint_frame_index}")
-
-    for _bpoint in tqdm(bpoint_frame_index, desc="Smoothing over breakpoints"):
-        adj_bpoint_smooth_window = (
-            min(bpoint_smooth_window[0], _bpoint),
-            min(bpoint_smooth_window[1], len(depth_f["frames_crop"]) - _bpoint),
-        )
-        _tmp = depth_f["frames_crop"][
-            _bpoint - adj_bpoint_smooth_window[0] : _bpoint + adj_bpoint_smooth_window[1]
-        ]
-        _tmp = ndimage.gaussian_filter(_tmp, smooth_kernel_bpoint)
-        depth_f["frames_crop"][
-            max(_bpoint - bpoint_retain_window[0], 0) : _bpoint + bpoint_retain_window[1]
-        ] = _tmp[
-            bpoint_smooth_window[0]
-            - bpoint_retain_window[0] : bpoint_smooth_window[0]
-            + bpoint_retain_window[1]
-        ]
-
-    crop_size = depth_f["frames_crop"].shape[1:]
-
+    # we can easily skip this by simply projecting min/max xy
+    # print(f"Original size {original_size}, crop size {crop_size}")
     if visualize_results:
         writer = MP4WriterPreview(
             f"{registration_fname}.mp4",
-            frame_size=(crop_size[1], crop_size[0]),
+            frame_size=stitch_size,
             fps=fps,
             cmap="turbo",
         )
         writer.open()
+    else:
+        writer = None
 
-        for batch in tqdm(batches, desc="Writing preview video"):
-            right_edge = min(batch + batch_size, len(pcl_frame_index))
-            _tmp = depth_f["frames_crop"][batch:right_edge]
+    for batch in tqdm(batches, desc="Smoothing frames"):
+        left_edge = max(batch - batch_overlap, 0)
+        left_noverlap = batch - left_edge
+        right_edge = min(batch + batch_size, len(pcl_frame_index))
+        smooth_frames = ndimage.gaussian_filter(
+            depth_f["frames"][left_edge:right_edge], smooth_kernel
+        )
+        depth_f["frames"][batch:right_edge] = smooth_frames[left_noverlap:]
+
+        if writer is not None:
             writer.write_frames(
-                _tmp,
+                smooth_frames[left_noverlap:],
                 progress_bar=False,
                 frames_idx=list(range(batch, right_edge)),
                 vmin=0,
                 vmax=600,
             )
 
+    if writer is not None:
         writer.close()
 
     save_metadata["complete"] = True
     with open(f"{registration_fname}.toml", "w") as f:
         toml.dump(save_metadata, f)
-    
 
 
 def next_even_number(x):

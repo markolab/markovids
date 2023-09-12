@@ -1,7 +1,11 @@
 import click
 import os
 import toml
-from markovids.util import convert_depth_to_pcl_and_register, reproject_pcl_to_depth
+from markovids.util import (
+    convert_depth_to_pcl_and_register,
+    reproject_pcl_to_depth,
+    fix_breakpoints,
+)
 
 
 @click.group()
@@ -71,19 +75,20 @@ def cli_registration(
     reproject_smooth_kernel,
     reproject_smooth_kernel_bpoint,
 ):
-    
     # SAVE PARAMETERS
     cli_params = locals()
     store_dir = os.path.join(data_dir, registration_dir)
-    
+
     if not os.path.exists(os.path.join(data_dir, segmentation_dir)):
-        raise RuntimeError(f"Segmentation directory {os.path.join(data_dir, segmentation_dir)} does not exist")
+        raise RuntimeError(
+            f"Segmentation directory {os.path.join(data_dir, segmentation_dir)} does not exist"
+        )
 
     if not os.path.exists(store_dir):
         os.makedirs(store_dir)
     else:
         pass
-    
+
     registration_metadata_file = os.path.join(store_dir, "pcls.toml")
     if os.path.exists(registration_metadata_file):
         registration_metadata = toml.load(registration_metadata_file)
@@ -91,7 +96,7 @@ def cli_registration(
     else:
         registration_complete = False
 
-    if not registration_complete:    
+    if not registration_complete:
         with open(os.path.join(store_dir, "registration_parameters.toml"), "w") as f:
             toml.dump(cli_params, f)
 
@@ -122,12 +127,12 @@ def cli_registration(
             floor_range=floor_range,
             registration_kwargs=registration_kwargs,
             breakpoint_extrapolate_history=breakpoint_extrapolate_history,
-            breakpoint_z_shift=breakpoint_z_shift
+            breakpoint_z_shift=breakpoint_z_shift,
         )
     else:
         print("Registration already complete, skipping...")
 
-    session_name = os.path.normpath(data_dir).split(os.sep)[-1] 
+    session_name = os.path.normpath(data_dir).split(os.sep)[-1]
     print(f"Session: {session_name}")
     reproject_file = os.path.join(data_dir, registration_dir, f"{session_name}.hdf5")
     reproject_metadata_file = os.path.join(data_dir, registration_dir, f"{session_name}.toml")
@@ -137,8 +142,12 @@ def cli_registration(
         reproject_complete = reproject_metadata["complete"]
     else:
         reproject_complete = False
-    
+
     if not reproject_complete:
+        print("Fixing breakpoints...")
+        fix_breakpoints(
+            os.path.join(data_dir, registration_dir, "pcls.hdf5")
+        )
         print("Reprojecting data...")
         reproject_pcl_to_depth(
             reproject_file,
