@@ -358,7 +358,7 @@ def reproject_pcl_to_depth(
     project_xy: bool = True,
     smooth_kernel: Tuple[float, float, float] = (1.0, 0.75, 0.75),
     visualize_results: bool = True,
-    centroid_outlier_trim_nsigma: int = 6,
+    centroid_outlier_trim_nsigma: int = 5,
 ):
     save_metadata = locals()
     save_metadata["complete"] = False
