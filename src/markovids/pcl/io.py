@@ -226,7 +226,7 @@ def depth_from_pcl_interpolate(
 
     # z *= z_scale
 
-    if np.isscalar(buffer)
+    if np.isscalar(buffer):
         u += buffer
         v += buffer
     elif len(buffer) == 2:

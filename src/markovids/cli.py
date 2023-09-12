@@ -26,8 +26,6 @@ def cli():
 @click.option("--burn-frames", type=int, default=500, show_envvar=True)
 @click.option("--valid-height-range", type=(float, float), default=(10, 800), show_envvar=True)
 @click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
-@click.option("--breakpoint-extrapolate-history", type=int, default=5, show_envvar=True)
-@click.option("--breakpoint-z-shift", type=bool, default=False, show_envvar=True)
 @click.option("--registration-max-correspondence-distance", type=float, default=1.0, show_envvar=True)
 @click.option("--registration-fitness-threshold", type=float, default=.25, show_envvar=True)
 @click.option("--registration-reference-future-len", type=int, default=50, show_envvar=True)
@@ -39,11 +37,10 @@ def cli():
 @click.option("--registration-type", type=click.Choice(["p2p","p2pl","generalized"]), default="generalized", show_envvar=True)
 @click.option("--reproject-batch-size", type=int, default=2000, show_envvar=True)
 @click.option("--reproject-batch-overlap", type=int, default=150, show_envvar=True)
-@click.option("--reproject-stitch-buffer", type=int, default=500, show_envvar=True)
+@click.option("--reproject-stitch-buffer", type=int, default=25, show_envvar=True)
 @click.option("--reproject-interpolation-distance-threshold", type=float, default=2.5, show_envvar=True)
-@click.option("--reproject-interpolation-method", type=str, default="cubic", show_envvar=True)
+@click.option("--reproject-interpolation-method", type=str, default="nearest", show_envvar=True)
 @click.option("--reproject-smooth-kernel", type=(float, float, float), default=(1., .75, .75), show_envvar=True)
-@click.option("--reproject-smooth-kernel-bpoint", type=(float, float, float), default=(2., 1.5, 1.5), show_envvar=True)
 # fmt: on
 def cli_registration(
     data_dir,
@@ -56,8 +53,6 @@ def cli_registration(
     burn_frames,
     valid_height_range,
     floor_range,
-    breakpoint_extrapolate_history,
-    breakpoint_z_shift,
     registration_max_correspondence_distance,
     registration_fitness_threshold,
     registration_reference_future_len,
@@ -73,7 +68,6 @@ def cli_registration(
     reproject_interpolation_distance_threshold,
     reproject_interpolation_method,
     reproject_smooth_kernel,
-    reproject_smooth_kernel_bpoint,
 ):
     # SAVE PARAMETERS
     cli_params = locals()
@@ -126,8 +120,6 @@ def cli_registration(
             valid_height_range=valid_height_range,
             floor_range=floor_range,
             registration_kwargs=registration_kwargs,
-            breakpoint_extrapolate_history=breakpoint_extrapolate_history,
-            breakpoint_z_shift=breakpoint_z_shift,
         )
     else:
         print("Registration already complete, skipping...")
@@ -158,7 +150,6 @@ def cli_registration(
             interpolation_distance_threshold=reproject_interpolation_distance_threshold,
             interpolation_method=reproject_interpolation_method,
             smooth_kernel=reproject_smooth_kernel,
-            smooth_kernel_bpoint=reproject_smooth_kernel_bpoint,
         )
     else:
         print("Skipping...")
