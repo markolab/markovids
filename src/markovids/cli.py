@@ -37,7 +37,7 @@ def cli():
 @click.option("--registration-cleanup-radius-combined", type=float, default=3.0, show_envvar=True)
 @click.option("--registration-type", type=click.Choice(["p2p","p2pl","generalized"]), default="generalized", show_envvar=True)
 @click.option("--breakpoint-algorithm", type=click.Choice(["combined", "single"]), default="combined", show_envvar=True)
-@click.option("--breakpoint-tranform-aggregate", type=bool, default=True, show_envvar=True)
+@click.option("--breakpoint-transform-aggregate", type=bool, default=True, show_envvar=True)
 @click.option("--reproject-batch-size", type=int, default=2000, show_envvar=True)
 @click.option("--reproject-batch-overlap", type=int, default=150, show_envvar=True)
 @click.option("--reproject-stitch-buffer", type=int, default=25, show_envvar=True)
