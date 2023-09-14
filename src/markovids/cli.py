@@ -22,8 +22,8 @@ def cli():
 @click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
 @click.option("--segmentation-dir", type=str, default="_segmentation_tau-5", show_envvar=True)
 @click.option("--background-spacing", type=int, default=500, show_envvar=True)
-@click.option("--batch-size", type=int, default=4000, show_envvar=True)
-@click.option("--batch-overlap", type=int, default=150, show_envvar=True)
+@click.option("--batch-size", type=int, default=2000, show_envvar=True)
+@click.option("--batch-overlap", type=int, default=100, show_envvar=True)
 @click.option("--burn-frames", type=int, default=500, show_envvar=True)
 @click.option("--valid-height-range", type=(float, float), default=(10, 800), show_envvar=True)
 @click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
@@ -144,7 +144,7 @@ def cli_registration(
         print("Fixing breakpoints...")
         if breakpoint_algorithm == "combined":
             fix_breakpoints_combined(
-                os.path.join(data_dir, registration_dir, "pcls.hdf5")
+                os.path.join(data_dir, registration_dir, "pcls.hdf5"),
                 transform_aggregate=breakpoint_transform_aggregate,
             )
         elif breakpoint_algorithm == "single":
