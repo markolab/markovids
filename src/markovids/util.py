@@ -30,6 +30,7 @@ import open3d as o3d
 import h5py
 import gc
 import copy
+import joblib
 
 o3d.utility.set_verbosity_level(o3d.utility.Error)
 
@@ -372,7 +373,7 @@ def fix_breakpoints_single(
             source_xyz = trim_outliers(np.asarray(source_pcl.points))
             target_xyz = trim_outliers(np.asarray(target_pcl.points))
             
-            diffs.append(np.median(target_xyz, axis=0) - np.median(source_xyz, axis=0))
+            diffs.append(np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0))
             # inclusive left hand range
             # exclusive right hand (cuts into next transition)
             matches = pcl_frame_idx[
@@ -386,7 +387,7 @@ def fix_breakpoints_single(
         
         if transform_aggregate:
             use_transform = np.eye(4)
-            use_transform[:3, 3] = np.median(diffs, axis=0)
+            use_transform[:3, 3] = np.nanmedian(diffs, axis=0)
             use_transform[2, 3] = 0
             for _group in frame_group:
                 transform_list.append(
@@ -415,12 +416,16 @@ def fix_breakpoints_single(
         
         # enforce symmetry???
     if transform_aggregate and enforce_symmetry:
+        print("Enforcing symmetry in breakpoint fixes...")
         uniq_pairs = list(set([_["pair"] for _ in transform_list]))
         uniq_transform = {}
 
         for _pair in uniq_pairs:
-            transform = [_["transform"] for _ in transform_list if _["pair"] == _pair][0]
-            uniq_transform[_pair] = transform
+            try:
+                transform = [_["transform"] for _ in transform_list if _["pair"] == _pair][0]
+                uniq_transform[_pair] = transform
+            except Exception:
+                pass
 
         new_transform = {}
         for (target, source), v in uniq_transform.items():
@@ -434,6 +439,7 @@ def fix_breakpoints_single(
         for i in range(len(transform_list)):
             transform_list[i]["transform"] = new_transform[transform_list[i]["pair"]]
 
+    joblib.dump(transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list.p"))
     idxsort = np.array([_["start"] for _ in transform_list]).argsort()
     sorted_transform_list = [transform_list[i] for i in idxsort]
     odometry = np.eye(4)
@@ -506,7 +512,8 @@ def fix_breakpoints_combined(
             target_xyz = target_xyz[~np.isnan(target_xyz).any(axis=1)]  # remove nans
             target_xyz = trim_outliers(target_xyz)
 
-            diffs.append(np.median(target_xyz, axis=0) - np.median(source_xyz, axis=0))
+            # be careful since nans will propagate...
+            diffs.append(np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0))
             # inclusive left hand range
             # exclusive right hand (cuts into next transition)
             matches = pcl_frame_idx[
@@ -519,7 +526,7 @@ def fix_breakpoints_combined(
         diffs = np.array(diffs)
         if transform_aggregate:
             use_transform = np.eye(4)
-            use_transform[:3, 3] = np.median(diffs, axis=0)
+            use_transform[:3, 3] = np.nanmedian(diffs, axis=0)
             use_transform[2, 3] = 0
             for _group in frame_group:
                 transform_list.append(
@@ -552,8 +559,11 @@ def fix_breakpoints_combined(
         uniq_transform = {}
 
         for _pair in uniq_pairs:
-            transform = [_["transform"] for _ in transform_list if _["pair"] == _pair][0]
-            uniq_transform[_pair] = transform
+            try:
+                transform = [_["transform"] for _ in transform_list if _["pair"] == _pair][0]
+                uniq_transform[_pair] = transform
+            except Exception:
+                pass
 
         new_transform = {}
         for (target, source), v in uniq_transform.items():
@@ -567,6 +577,7 @@ def fix_breakpoints_combined(
         for i in range(len(transform_list)):
             transform_list[i]["transform"] = new_transform[transform_list[i]["pair"]]
 
+    joblib.dump(transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list.p"))
     idxsort = np.array([_["start"] for _ in transform_list]).argsort()
     sorted_transform_list = [transform_list[i] for i in idxsort]
     odometry = np.eye(4)
@@ -628,8 +639,8 @@ def reproject_pcl_to_depth(
     floor_distances = {k: float(v) for k, v in floor_distances.items()}
 
     max_batch_size = int(1e7)
-    max_pts = np.nanmax(pcl_f["xyz"][:1], axis=0)
-    min_pts = np.nanmin(pcl_f["xyz"][:1], axis=0)
+    max_pts = np.nanmax(pcl_f["xyz"][:100], axis=0)
+    min_pts = np.nanmin(pcl_f["xyz"][:100], axis=0)
     for batch in tqdm(range(0, len(pcl_f["xyz"]), max_batch_size), desc="Getting max"):
         pts = pcl_f["xyz"][batch : batch + max_batch_size]
         u, v, z = pcl_to_pxl_coords(
