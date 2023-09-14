@@ -142,13 +142,15 @@ def cli_registration(
 
     if not reproject_complete:
         print("Fixing breakpoints...")
-        if registration_breakpoint_algorithm == "combined":
+        if breakpoint_algorithm == "combined":
             fix_breakpoints_combined(
                 os.path.join(data_dir, registration_dir, "pcls.hdf5")
+                transform_aggregate=breakpoint_transform_aggregate,
             )
-        elif registration_breakpoint_algorithm == "single":
+        elif breakpoint_algorithm == "single":
            fix_breakpoints_single(
-                os.path.join(data_dir, registration_dir, "pcls.hdf5")
+                os.path.join(data_dir, registration_dir, "pcls.hdf5"),
+                transform_aggregate=breakpoint_transform_aggregate,
             ) 
         print("Reprojecting data...")
         reproject_pcl_to_depth(
