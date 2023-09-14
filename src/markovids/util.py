@@ -641,6 +641,8 @@ def reproject_pcl_to_depth(
     max_batch_size = int(1e7)
     max_pts = np.nanmax(pcl_f["xyz"][:100], axis=0)
     min_pts = np.nanmin(pcl_f["xyz"][:100], axis=0)
+    max_pts = np.nan_to_num(max_pts, -np.inf)
+    min_pts = np.nan_to_num(min_pts, +np.inf) 
     for batch in tqdm(range(0, len(pcl_f["xyz"]), max_batch_size), desc="Getting max"):
         pts = pcl_f["xyz"][batch : batch + max_batch_size]
         u, v, z = pcl_to_pxl_coords(
@@ -650,8 +652,14 @@ def reproject_pcl_to_depth(
             post_z_shift=floor_distances[cameras[0]],
         )
         new_pts = np.vstack([u, v, z]).T
-        max_pts = np.maximum(max_pts, np.nanmax(new_pts, axis=0))
-        min_pts = np.minimum(min_pts, np.nanmin(new_pts, axis=0))
+        new_pts_min = new_pts.copy()
+        new_pts_max = new_pts.copy()
+        new_pts_min = np.nanmin(new_pts, axis=0)
+        new_pts_max = np.nanmax(new_pts, axis=0)
+        new_pts_min = np.nan_to_num(new_pts_min, +np.inf)
+        new_pts_max = np.nan_to_num(new_pts_max, -np.inf)
+        max_pts = np.maximum(max_pts, new_pts_max)
+        min_pts = np.minimum(min_pts, new_pts_min)
 
     buffer = np.floor(np.minimum(min_pts[:2], np.array([0, 0]))).astype("int") * -1
     buffer += stitch_buffer
