@@ -4,7 +4,8 @@ import toml
 from markovids.util import (
     convert_depth_to_pcl_and_register,
     reproject_pcl_to_depth,
-    fix_breakpoints,
+    fix_breakpoints_combined,
+    fix_breakpoints_single
 )
 
 
@@ -35,6 +36,8 @@ def cli():
 @click.option("--registration-cleanup-nbs-combined", type=int, default=25, show_envvar=True)
 @click.option("--registration-cleanup-radius-combined", type=float, default=3.0, show_envvar=True)
 @click.option("--registration-type", type=click.Choice(["p2p","p2pl","generalized"]), default="generalized", show_envvar=True)
+@click.option("--breakpoint-algorithm", type=click.Choice(["combined", "single"]), default="combined", show_envvar=True)
+@click.option("--breakpoint-tranform-aggregate", type=bool, default=True, show_envvar=True)
 @click.option("--reproject-batch-size", type=int, default=2000, show_envvar=True)
 @click.option("--reproject-batch-overlap", type=int, default=150, show_envvar=True)
 @click.option("--reproject-stitch-buffer", type=int, default=25, show_envvar=True)
@@ -62,6 +65,8 @@ def cli_registration(
     registration_cleanup_nbs_combined,
     registration_cleanup_radius_combined,
     registration_type,
+    breakpoint_algorithm,
+    breakpoint_transform_aggregate,
     reproject_batch_size,
     reproject_batch_overlap,
     reproject_stitch_buffer,
@@ -137,9 +142,14 @@ def cli_registration(
 
     if not reproject_complete:
         print("Fixing breakpoints...")
-        fix_breakpoints(
-            os.path.join(data_dir, registration_dir, "pcls.hdf5")
-        )
+        if registration_breakpoint_algorithm == "combined":
+            fix_breakpoints_combined(
+                os.path.join(data_dir, registration_dir, "pcls.hdf5")
+            )
+        elif registration_breakpoint_algorithm == "single":
+           fix_breakpoints_single(
+                os.path.join(data_dir, registration_dir, "pcls.hdf5")
+            ) 
         print("Reprojecting data...")
         reproject_pcl_to_depth(
             reproject_file,
