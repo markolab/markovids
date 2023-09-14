@@ -413,7 +413,9 @@ def fix_breakpoints_single(
                         "pair": (target, source)
                     }
                 )
-        
+
+    joblib.dump(transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list_pre.p"))
+     
         # enforce symmetry???
     if transform_aggregate and enforce_symmetry:
         print("Enforcing symmetry in breakpoint fixes...")
@@ -430,8 +432,11 @@ def fix_breakpoints_single(
         new_transform = {}
         for (target, source), v in uniq_transform.items():
             try:
+                # ONLY REFLECT THE TRANSLATION COMPONENT!!!!!
+                reflection = uniq_transform[(source, target)].copy()
+                reflection[:3, 3] *= -1
                 new_transform[(target, source)] = (
-                    uniq_transform[(target, source)] + -1 * uniq_transform[(source, target)]
+                    uniq_transform[(target, source)] + reflection
                 ) / 2.0
             except KeyError:
                 new_transform[(target, source)] = uniq_transform[(target, source)]
