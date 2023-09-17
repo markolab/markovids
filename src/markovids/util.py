@@ -8,11 +8,13 @@ from markovids.vid.io import (
 )
 from markovids.depth.plane import get_floor
 from markovids.depth.io import load_segmentation_masks
+from markovids.depth.moments import im_moment_features
 from markovids.pcl.io import (
     pcl_from_depth,
     depth_from_pcl_interpolate,
     trim_outliers,
     pcl_to_pxl_coords,
+    project_world_coordinates,
 )
 from markovids.pcl.registration import (
     DepthVideoPairwiseRegister,
@@ -31,6 +33,7 @@ import h5py
 import gc
 import copy
 import joblib
+import pandas as pd
 
 o3d.utility.set_verbosity_level(o3d.utility.Error)
 
@@ -798,3 +801,121 @@ def next_even_number(x):
 
 def prev_even_number(x):
     return (np.floor(x / 2) * 2).astype("int")
+
+
+def compute_scalars(
+    registration_file: str,
+    intrinsics_file: str,
+    batch_size: int=2000,
+    z_threshold: float=5,
+    scalar_tau: float=0.1,
+    scalar_diff_tau: float=0.05,
+) -> pd.DataFrame:
+    # load intrinsics
+    intrinsics_matrix, distortion_coeffs = format_intrinsics(
+        toml.load(intrinsics_file)
+    )
+
+    # directory with registration data
+    registration_dir = os.path.dirname(os.path.abspath(registration_file))
+
+    # directory with raw data (one dir up)
+    data_dir = os.path.dirname(registration_dir)
+
+    # ensure timestamps line up with registration
+    metadata = toml.load(os.path.join(data_dir, "metadata.toml"))
+    registration_metadata = toml.load(os.path.join(registration_dir, "pcls.toml"))
+    cameras = list(metadata["camera_metadata"].keys())
+    head_camera = cameras[0]
+
+    ts_paths = {
+        os.path.join(data_dir, f"{_cam}.txt"): _cam
+        for _cam in registration_metadata["cameras"]
+    }
+    _, merged_ts = read_timestamps_multicam(
+        ts_paths, merge_tolerance=registration_metadata["timestamp_merge_tolerance"]
+    )
+
+    fps = float(metadata["camera_metadata"][head_camera]["AcquisitionFrameRate"])
+    floor_distance = float(registration_metadata["floor_distances"][head_camera])
+
+    registration_metadata_file = os.path.join(registration_dir, "pcls.toml")
+    registration_metadata = toml.load(registration_metadata_file)
+
+    cx = intrinsics_matrix[head_camera][0, 2]
+    cy = intrinsics_matrix[head_camera][1, 2]
+    fx = intrinsics_matrix[head_camera][0, 0]
+    fy = intrinsics_matrix[head_camera][1, 1]
+
+    with h5py.File(registration_file, "r") as f:
+        nframes = len(f["frames"])
+        frame_ids = f["frame_id"][()]
+
+    centroid = np.full((nframes, 3), np.nan, dtype="float32")
+    orientation = np.full((nframes,), np.nan, dtype="float32")
+    axis_length = np.full((nframes, 2), np.nan, dtype="float32")
+    sigma = np.full((nframes, 3), np.nan, dtype="float32")
+    # batches = range(0, nframes, batch_size)
+    batches = range(0, batch_size * 2, batch_size) # for testing only...
+
+    with h5py.File(registration_file, "r") as f:
+        for _batch in tqdm(batches, desc="Computing scalars"):
+            working_range = range(_batch, min(_batch + batch_size, nframes))
+            frame_batch = f["frames"][working_range]
+            for _id, _frame in zip(working_range, frame_batch):
+                mouse_mask = _frame > z_threshold
+                v, u = np.where(mouse_mask)
+                z = _frame[v, u]
+                # pack into array and project to world coordinates for centroid
+                uvz = np.hstack([u[:, None], v[:, None], z[:, None]])
+                xyz = project_world_coordinates(
+                    uvz, floor_distance=floor_distance, cx=cx, cy=cy, fx=fx, fy=fy
+                )
+                features = im_moment_features(mouse_mask.astype("uint8"))
+                centroid[_id] = np.nanmean(xyz, axis=0)
+                sigma[_id] = np.nanstd(xyz, axis=0)
+                # orientation and axis length are in pixels
+                orientation[_id] = features["orientation"]
+                axis_length[_id] = features["axis_length"]
+
+    all_data = np.hstack([centroid, sigma, orientation[:, None], axis_length])
+    all_columns = [
+        "x_mean_mm",
+        "y_mean_mm",
+        "z_mean_mm",
+        "x_std_mm",
+        "y_std_mm",
+        "z_std_mm",
+        "orientation_rad",
+        "axis_length_1_px",
+        "axis_length_2_px",
+    ]
+
+    scalar_tau_samples = np.round(scalar_tau * fps).astype("int")
+    scalar_diff_tau_samples = np.round(scalar_diff_tau * fps).astype("int")
+
+    df_scalars = pd.DataFrame(all_data, columns=all_columns, index=frame_ids)
+    df_scalars["orientation_rad"] *= 2
+    df_scalars["orientation_rad"] = np.unwrap(df_scalars["orientation_rad"])
+    df_scalars["timestamps"] = merged_ts.loc[df_scalars.index, "system_timestamp"]
+    df_scalars = df_scalars.rolling(scalar_tau_samples, 1, True).mean()
+
+    df_scalars_diff = df_scalars.diff().rolling(scalar_diff_tau_samples, 1, True).mean()
+    # divide by period to convert diff into s^-1
+    period = df_scalars["timestamps"].diff()
+    df_scalars_diff = df_scalars_diff.div(period, axis=0)
+
+    velocity_3d = np.sqrt(
+        (df_scalars_diff[["x_mean_mm", "y_mean_mm", "z_mean_mm"]] ** 2).sum(axis=1)
+    )
+    velocity_2d = np.sqrt((df_scalars_diff[["x_mean_mm", "y_mean_mm"]] ** 2).sum(axis=1))
+    velocity_z = df_scalars_diff["z_mean_mm"]
+
+    df_scalars["velocity_2d_mm_s"] = velocity_2d
+    df_scalars["velocity_3d_mm_s"] = velocity_3d
+    df_scalars["velocity_z_mm_s"] = velocity_z
+    df_scalars["velocity_position_angle_rad_s"] = np.arctan2(df_scalars_diff["y_mean_mm"], df_scalars_diff["x_mean_mm"])
+    df_scalars["velocity_orientation_rad_s"] = df_scalars_diff["orientation_rad"]
+    df_scalars.index.name = "frame_id"
+
+    return df_scalars

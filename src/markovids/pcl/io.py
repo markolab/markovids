@@ -132,6 +132,54 @@ def depth_from_pcl(
     return depth_image
 
 
+def project_world_coordinates(
+    uvz, z_scale=4.0, floor_distance=None, cx=319., cy=231., fx=525., fy=525.
+):
+    if floor_distance is not None:
+        project_z = (floor_distance - uvz[:, 2]) / z_scale
+    else:
+        project_z = uvz[:, 2] / z_scale
+    z = uvz[:, 2] / z_scale
+    x = (uvz[:, 0] - cx) * project_z / fx
+    y = (uvz[:, 1] - cy) * project_z / fy
+    return np.hstack([x[:, None], y[:, None], z[:, None]])
+
+
+def pxl_to_pcl_coords(uvz, intrinsic_matrix, project_xy=True, post_z_shift=None, z_scale=4.0, post_scale=None):
+    
+    cx = intrinsic_matrix[0, 2]
+    cy = intrinsic_matrix[1, 2]
+    fx = intrinsic_matrix[0, 0]
+    fy = intrinsic_matrix[1, 1]
+
+    raw_z = uvz[:,2].copy().astype("float32") / z_scale
+
+    if post_z_shift is not None:
+        use_z = post_z_shift - raw_z
+    else:
+        use_z = raw_z
+
+    if project_xy:
+        x = (uvz[:,0] - cx) * raw_z / fx
+        y = (uvz[:,1] - cy) * raw_z / fy
+    else:
+        x = uvz[:,0]
+        y = uvz[:,1]
+
+    valid_points = ~np.isnan(use_z) & (use_z > 0)
+    xyz = np.array(
+        [
+            x[valid_points].ravel(),
+            y[valid_points].ravel(),
+            use_z[valid_points].ravel(),
+        ]
+    ).T
+
+    return xyz
+
+
+
+
 # use this to speed up cropping...
 def pcl_to_pxl_coords(
     xyz, intrinsic_matrix, project_xy=True, post_z_shift=None, z_scale=4.0, post_scale=None

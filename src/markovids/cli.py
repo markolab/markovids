@@ -5,7 +5,8 @@ from markovids.util import (
     convert_depth_to_pcl_and_register,
     reproject_pcl_to_depth,
     fix_breakpoints_combined,
-    fix_breakpoints_single
+    fix_breakpoints_single,
+    compute_scalars,
 )
 
 
@@ -148,10 +149,10 @@ def cli_registration(
                 transform_aggregate=breakpoint_transform_aggregate,
             )
         elif breakpoint_algorithm == "single":
-           fix_breakpoints_single(
+            fix_breakpoints_single(
                 os.path.join(data_dir, registration_dir, "pcls.hdf5"),
                 transform_aggregate=breakpoint_transform_aggregate,
-            ) 
+            )
         print("Reprojecting data...")
         reproject_pcl_to_depth(
             reproject_file,
@@ -166,6 +167,41 @@ def cli_registration(
     else:
         print("Skipping...")
         pass
+
+
+# fmt: off
+@cli.command(name="compute-scalars", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_REG"})
+@click.argument("registration_file", type=click.Path(exists=True))
+@click.option("--scalar-dir", type=str, default="_scalars", help="Directory for output", show_envvar=True)
+@click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
+@click.option("--batch-size", type=int, default=3000, show_envvar=True)
+@click.option("--z-threshold", type=float, default=5., show_envvar=True)
+@click.option("--scalar-tau", type=float, default=.1, show_envvar=True)
+@click.option("--scalar-diff-tau", type=float, default=.05, show_envvar=True)
+# fmt: on
+def cli_registration(
+    registration_file,
+    scalar_dir,
+    intrinsics_file,
+    batch_size,
+    z_threshold,
+    scalar_tau,
+    scalar_diff_tau,
+):
+    cli_params = locals()
+    os.makedirs(scalar_dir, exist_ok=True)  # make directory for output
+    df_scalars = compute_scalars(
+        registration_file,
+        intrinsics_file,
+        batch_size=batch_size,
+        z_threshold=z_threshold,
+        scalar_tau=scalar_tau,
+        scalar_diff_tau=scalar_diff_tau,
+    )
+
+    df_scalars.to_parquet(os.path.join(scalar_dir, "scalars.parquet"))
+    with open(os.path.join(scalar_dir, "scalars.toml"), "w") as f:
+        toml.dump(cli_params, f)
 
 
 if __name__ == "__main__":
