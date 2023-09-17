@@ -189,7 +189,10 @@ def cli_registration(
     scalar_diff_tau,
 ):
     cli_params = locals()
-    os.makedirs(scalar_dir, exist_ok=True)  # make directory for output
+    
+    registration_dir = os.path.dirname(os.path.abspath(registration_file))
+    data_dir = os.path.dirname(registration_dir)
+    os.makedirs(os.path.join(data_dir, scalar_dir), exist_ok=True)  # make directory for output
     df_scalars = compute_scalars(
         registration_file,
         intrinsics_file,
@@ -199,8 +202,8 @@ def cli_registration(
         scalar_diff_tau=scalar_diff_tau,
     )
 
-    df_scalars.to_parquet(os.path.join(scalar_dir, "scalars.parquet"))
-    with open(os.path.join(scalar_dir, "scalars.toml"), "w") as f:
+    df_scalars.to_parquet(os.path.join(data_dir, scalar_dir, "scalars.parquet"))
+    with open(os.path.join(data_dir, scalar_dir, "scalars.toml"), "w") as f:
         toml.dump(cli_params, f)
 
 

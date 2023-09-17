@@ -855,8 +855,8 @@ def compute_scalars(
     orientation = np.full((nframes,), np.nan, dtype="float32")
     axis_length = np.full((nframes, 2), np.nan, dtype="float32")
     sigma = np.full((nframes, 3), np.nan, dtype="float32")
-    # batches = range(0, nframes, batch_size)
-    batches = range(0, batch_size * 2, batch_size) # for testing only...
+    batches = range(0, nframes, batch_size)
+    # batches = range(0, batch_size * 2, batch_size) # for testing only...
 
     with h5py.File(registration_file, "r") as f:
         for _batch in tqdm(batches, desc="Computing scalars"):
