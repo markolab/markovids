@@ -179,7 +179,7 @@ def cli_registration(
 @click.option("--scalar-tau", type=float, default=.1, show_envvar=True)
 @click.option("--scalar-diff-tau", type=float, default=.05, show_envvar=True)
 # fmt: on
-def cli_registration(
+def cli_compute_scalars(
     registration_file,
     scalar_dir,
     intrinsics_file,
