@@ -50,16 +50,16 @@ class DepthVideoPairwiseRegister:
     ):
         if registration_type.lower() == "p2p":
             pairwise_criteria = default_criteria
-            pairwise_estimation= default_estimation_p2p
+            pairwise_estimation = default_estimation_p2p
         elif registration_type.lower() == "p2pl":
             pairwise_criteria = default_criteria
-            pairwise_estimation= default_estimation_p2pl
+            pairwise_estimation = default_estimation_p2pl
         elif registration_type.lower() == "generalized":
             pairwise_criteria = default_criteria
-            pairwise_estimation= default_estimation_general
+            pairwise_estimation = default_estimation_general
         else:
-            raise RuntimeError(f"Did not understand registration type {registration_type}") 
-        
+            raise RuntimeError(f"Did not understand registration type {registration_type}")
+
         self.pairwise_registration_options = {
             "max_correspondence_distance": max_correspondence_distance,
             "criteria": pairwise_criteria,
@@ -119,7 +119,7 @@ class DepthVideoPairwiseRegister:
         # self.weights = {_cam: weight_matrix[:,i] for i, _cam in enumerate(cams)}
         self.npoints = npoints
 
-    def get_transforms(self, pcls, progress_bar=True):
+    def get_transforms_pairwise(self, pcls, progress_bar=True):
         if self.weights is None:
             self.get_reference_node_weights(pcls)
 
@@ -169,7 +169,7 @@ class DepthVideoPairwiseRegister:
             ):
                 reference_node_proposal = reference_node
             else:
-                weights_diff[reference_node] = -np.inf # exclude ref.
+                weights_diff[reference_node] = -np.inf  # exclude ref.
                 reference_node_proposal = max(weights_diff, key=npoints.get)
 
             # weights_minus_ci = {_cam: self.weights_minus_ci[_cam][_frame] for _cam in cams}
@@ -235,6 +235,188 @@ class DepthVideoPairwiseRegister:
                     self.current_transform[_cam] = transform
                     self.transforms[_cam][_frame] = transform
 
+    def get_transforms_multiway(self, pcls, progress_bar=True):
+        if self.weights is None:
+            self.get_reference_node_weights(pcls)
+
+        cams = list(pcls.keys())
+        npcls = len(pcls[cams[0]])
+
+        # initialize variables we need to keep around
+        self.current_transform = {_cam: None for _cam in cams}
+        self.transforms = {_cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams}
+        self.fitness = {_cam: np.full((npcls,), np.nan, dtype="float") for _cam in cams}
+        self.reference_node = []
+        # reference_node = None
+
+        # initialize a transform for each frame, nan = skip transform
+        transforms = {_cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams}
+        init_weights = {_cam: self.weights_mu[_cam][0] for _cam in cams}
+        reference_node = max(init_weights, key=init_weights.get)
+        previous_reference_node_proposal = reference_node
+
+        reference_debounce_count = 0
+        for _frame in tqdm(
+            range(npcls), disable=not progress_bar, desc="Estimating transformations"
+        ):
+            # if the target object is missing, simply reference camera against previous transform
+
+            # npoints = {_cam: len(pcls[_cam][_frame].points) for _cam in cams}
+            npoints = {_cam: self.npoints[_cam][_frame] for _cam in cams}
+            if _frame > 0:
+                npoints_retain = {
+                    _cam: self.npoints[_cam][_frame] / (self.npoints[_cam][_frame - 1] + 1e-3)
+                    for _cam in cams
+                }
+            else:
+                npoints_retain = {_cam: 1 for _cam in cams}
+
+            weights_diff = {
+                _cam: self.weights_minus_ci[_cam][_frame]
+                - self.weights_plus_ci[reference_node][_frame]
+                for _cam in cams
+            }
+            max_diff = max(weights_diff.values())
+            # use smoothed weights to see if we cross threshold...
+            if (
+                (max_diff <= 0)
+                and (npoints[reference_node] >= self.reference_min_npoints)
+                and (npoints_retain[reference_node] >= self.reference_min_fraction)
+            ):
+                reference_node_proposal = reference_node
+            else:
+                weights_diff[reference_node] = -np.inf  # exclude ref.
+                reference_node_proposal = max(weights_diff, key=npoints.get)
+
+            # weights_minus_ci = {_cam: self.weights_minus_ci[_cam][_frame] for _cam in cams}
+            # reference_node_proposal = max(weights, key=weights.get)
+
+            if (reference_node_proposal != reference_node) and (
+                reference_node_proposal == previous_reference_node_proposal
+            ):
+                reference_debounce_count += 1
+            else:
+                reference_debounce_count = 0
+            previous_reference_node_proposal = reference_node_proposal
+
+            if reference_debounce_count > self.reference_debounce:
+                reference_node = reference_node_proposal
+                reference_debounce_count = 0
+
+            if (len(self.reference_node) > 0) and (reference_node != self.reference_node[-1]):
+                self.current_transform = {
+                    _cam: None for _cam in cams  # reset if our reference switches...
+                }
+
+            self.reference_node.append(reference_node)
+            target_pcl = pcls[reference_node][_frame]
+            self.transforms[reference_node][_frame] = np.eye(4)  # set to identity
+
+            nontarget_cams = [_cam for _cam in cams if _cam is not reference_node]
+
+            # consider edges to target odometry, others are loop closures...
+            # alternative: FORM A LOOP starting with reference and ending with reference...
+            #              would require estimating overlap for a large bank of cameras...not a bad idea
+            #              since it should be much more robust than current solution...
+            pose_graph = o3d.pipelines.registration.PoseGraph()
+            odometry = np.identity(4)
+            # reference is node 0
+            pose_graph.nodes.append(o3d.pipelines.registration.PoseGraphNode(odometry))
+            pose_graph_cams = [reference_node]
+            target_id = 0
+            offset1 = 1
+            
+            for _cam_id, _cam1 in enumerate(nontarget_cams):
+                use_pcl = pcls[_cam1][_frame]
+
+                odometry = np.identity(4)
+                if len(use_pcl.points) < self.min_npoints:
+                    # print("skip")
+                    continue
+
+                dct1 = pairwise_registration(
+                    use_pcl,
+                    target_pcl,
+                    init_transformation=self.current_transform[_cam1],
+                    compute_information=True,
+                    **self.pairwise_registration_options,
+                )
+
+                dct2 = pairwise_registration(
+                    use_pcl,
+                    target_pcl,
+                    init_transformation=None,  # re-initialize if last transform sucked
+                    compute_information=True,
+                    **self.pairwise_registration_options,
+                )
+
+                if dct1["fitness"] > dct2["fitness"]:
+                    dct = dct1
+                else:
+                    dct = dct2
+
+                fitness = dct["fitness"]
+                transform = dct["transformation"]
+                information = dct["information"]
+
+                self.fitness[_cam1][_frame] = fitness
+                odometry = np.matmul(transform, odometry)
+
+                # each new node is now offset + 1
+                pose_graph.nodes.append(
+                    o3d.pipelines.registration.PoseGraphNode(odometry)
+                )
+
+                pose_graph.edges.append(
+                    o3d.pipelines.registration.PoseGraphEdge(
+                        offset1, target_id, transform, information, uncertain=False
+                    )
+                )
+                # so we can recover cam name post-optimization
+                pose_graph_cams.append(_cam1)
+                offset2 = 1
+                for _cam2 in nontarget_cams[_cam_id + 1:]:
+                    use_pcl2 = pcls[_cam2][_frame]
+                    
+                    # now target is use_pcl1
+                    if len(use_pcl2.points) < self.min_npoints:
+                        # print("skip2")
+                        continue 
+
+                    # loop closure
+                    dct = pairwise_registration(
+                        use_pcl2,
+                        use_pcl,
+                        init_transformation=None,
+                        compute_information=True,
+                        **self.pairwise_registration_options,
+                    )
+                    
+                    fitness = dct["fitness"]
+                    transform = dct["transformation"]
+                    information = dct["information"] 
+
+                    pose_graph.edges.append(
+                        o3d.pipelines.registration.PoseGraphEdge(
+                            offset1 + offset2, offset1, transform, information, uncertain=True
+                        )
+                    )
+
+                    offset2 += 1 
+                offset1 += 1
+
+            # need effective backup in case of failure (1 camera only, e.g.)...
+            optimize_pose_graph(pose_graph)
+            for i, _cam in enumerate(pose_graph_cams):
+                # any fitness checks??
+                self.current_transform[_cam] = pose_graph.nodes[i].pose
+                self.transforms[_cam][_frame] = pose_graph.nodes[i].pose
+
+                # if fitness > self.fitness_threshold:
+                #     self.current_transform[_cam] = transform
+                #     self.transforms[_cam][_frame] = transform
+
+    # LOOK INTO VOLUME INTEGRATE, NEED DEPTH IMGS + INTRINSICS + RELATIVE POSES...
     def combine_pcls(self, pcls, progress_bar=True):
         cams = list(pcls.keys())
         npcls = len(pcls[cams[0]])
@@ -287,7 +469,10 @@ def pairwise_registration(
         df = c0 - c1
         init_transformation[:3, 3] = df
 
-    if type(estimation).__name__ in ["TransformationEstimationPointToPoint", "TransformationEstimationPointToPlane"]:
+    if type(estimation).__name__ in [
+        "TransformationEstimationPointToPoint",
+        "TransformationEstimationPointToPlane",
+    ]:
         _result = o3d.pipelines.registration.registration_icp(
             source,
             target,
@@ -303,14 +488,14 @@ def pairwise_registration(
             max_correspondence_distance,
             init_transformation,
             estimation,
-            criteria, 
+            criteria,
         )
     else:
         RuntimeError(f"Did not understand registration type: {estimation.__name__}")
 
     transform = np.array(_result.transformation)
     if not z_shift:
-        transform[2,3] = 0
+        transform[2, 3] = 0
 
     dct = {
         "fitness": _result.fitness,
@@ -327,13 +512,16 @@ def pairwise_registration(
 
 
 default_opt = o3d.pipelines.registration.GlobalOptimizationConvergenceCriteria()
-default_opt.max_iteration = 1000
-default_opt.max_iteration_lm = 100
+default_opt.max_iteration = 50
+default_opt.max_iteration_lm = 50
+default_opt.min_right_term = 1e-20
+default_opt.min_relative_increment = 1e-20
+default_opt.min_relative_residual_increment = 1e-20
 
 
 def optimize_pose_graph(
     pose_graph: o3d.pipelines.registration.PoseGraph,
-    max_correspondence_distance: float = 0.005,
+    max_correspondence_distance: float = 1.0,
     edge_prune_threshold: float = 0.25,
     preference_loop_closure: float = 0.1,
     reference_node: int = 0,
@@ -345,7 +533,7 @@ def optimize_pose_graph(
         preference_loop_closure=preference_loop_closure,
         reference_node=reference_node,
     )
-    with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Debug) as cm:
+    with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Error) as cm:
         o3d.pipelines.registration.global_optimization(
             pose_graph,
             o3d.pipelines.registration.GlobalOptimizationLevenbergMarquardt(),

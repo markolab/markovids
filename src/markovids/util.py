@@ -208,7 +208,7 @@ def convert_depth_to_pcl_and_register(
 
         # registration
         registration = DepthVideoPairwiseRegister(**registration_kwargs)
-        registration.get_transforms(pcls, progress_bar=False)
+        registration.get_transforms_multiway(pcls, progress_bar=False)
         pcls_combined = registration.combine_pcls(pcls, progress_bar=False)
 
         # farthest point downsample???
