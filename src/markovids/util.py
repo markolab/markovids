@@ -210,8 +210,10 @@ def convert_depth_to_pcl_and_register(
         # registration
         registration = DepthVideoPairwiseRegister(**registration_kwargs)
         if registration_algorithm == "multiway":
+            print("Using multiway registration...")
             registration.get_transforms_multiway(pcls, progress_bar=False)
         elif registration_algorithm == "pairwise":
+            print("Using pairwise registration...")
             registration.get_transforms_pairwise(pcls, progress_bar=False)
         else:
             raise RuntimeError(f"Did not understand registration algorithm {registration_algorithm}")
