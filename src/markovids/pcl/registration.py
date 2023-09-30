@@ -318,6 +318,8 @@ class DepthVideoPairwiseRegister:
             # alternative: FORM A LOOP starting with reference and ending with reference...
             #              would require estimating overlap for a large bank of cameras...not a bad idea
             #              since it should be much more robust than current solution...
+            #              simply add up segmented pixels on each camera simultaneously, use to form
+            #              a loop from reference node and back
             pose_graph = o3d.pipelines.registration.PoseGraph()
             odometry = np.identity(4)
             # reference is node 0

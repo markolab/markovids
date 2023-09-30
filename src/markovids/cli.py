@@ -28,6 +28,7 @@ def cli():
 @click.option("--burn-frames", type=int, default=500, show_envvar=True)
 @click.option("--valid-height-range", type=(float, float), default=(10, 800), show_envvar=True)
 @click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
+@click.option("--registration-algorithm", type=click.Choice(["pairwise", "multiway"]), default="multiway", show_envvar=True)
 @click.option("--registration-max-correspondence-distance", type=float, default=1.0, show_envvar=True)
 @click.option("--registration-fitness-threshold", type=float, default=.25, show_envvar=True)
 @click.option("--registration-reference-future-len", type=int, default=50, show_envvar=True)
@@ -57,6 +58,7 @@ def cli_registration(
     burn_frames,
     valid_height_range,
     floor_range,
+    registration_algorithm,
     registration_max_correspondence_distance,
     registration_fitness_threshold,
     registration_reference_future_len,
@@ -125,6 +127,7 @@ def cli_registration(
             burn_frames=burn_frames,
             valid_height_range=valid_height_range,
             floor_range=floor_range,
+            registration_algorithm=registration_algorithm,
             registration_kwargs=registration_kwargs,
         )
     else:

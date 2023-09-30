@@ -62,6 +62,7 @@ def convert_depth_to_pcl_and_register(
     batch_size: int = 2000,
     batch_overlap: int = 150,
     voxel_down_sample: float = 1.0,
+    registration_algorithm: str = "multiway",
     pcl_kwargs: dict = {},
     registration_kwargs: dict = {},
 ):
@@ -208,7 +209,14 @@ def convert_depth_to_pcl_and_register(
 
         # registration
         registration = DepthVideoPairwiseRegister(**registration_kwargs)
-        registration.get_transforms_multiway(pcls, progress_bar=False)
+        if registration_algorithm == "multiway":
+            registration.get_transforms_multiway(pcls, progress_bar=False)
+        elif registration_algorithm == "pairwise":
+            registration.get_transforms_pairwise(pcls, progress_bar=False)
+        else:
+            raise RuntimeError(f"Did not understand registration algorithm {registration_algorithm}")
+
+        # TODO: add volume integration as an option here...
         pcls_combined = registration.combine_pcls(pcls, progress_bar=False)
 
         # farthest point downsample???
