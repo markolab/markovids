@@ -27,7 +27,7 @@ def cli():
 @click.option("--burn-frames", type=int, default=500, show_envvar=True)
 @click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
 @click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
-@click.option("--registration-algorithm", type=click.Choice(["pairwise", "multiway"]), default="multiway", show_envvar=True)
+@click.option("--registration-algorithm", type=click.Choice(["pairwise", "multiway"]), default="pairwise", show_envvar=True)
 @click.option("--registration-cleanup-nbs-combined", type=int, default=25, show_envvar=True)
 @click.option("--registration-cleanup-nbs", type=int, default=7, show_envvar=True)
 @click.option("--registration-cleanup-radius-combined", type=float, default=3.0, show_envvar=True)
