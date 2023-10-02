@@ -1,4 +1,4 @@
-from typing import Tuple, Tuple
+from typing import Tuple, Optional
 from markovids.vid.io import (
     format_intrinsics,
     get_bground,
@@ -8,6 +8,7 @@ from markovids.vid.io import (
 )
 from markovids.depth.plane import get_floor
 from markovids.depth.io import load_segmentation_masks
+from markovids.depth.track import clean_roi
 from markovids.depth.moments import im_moment_features
 from markovids.pcl.io import (
     pcl_from_depth,
@@ -52,25 +53,41 @@ registration_kwargs_default = {
 def convert_depth_to_pcl_and_register(
     data_dir: str,
     intrinsics_file: str,
-    registration_dir: str = "_registration",
-    segmentation_dir: str = "_segmentation_tau-5",
     background_spacing: int = 500,
-    floor_range: Tuple[float, float] = (1300.0, 1600.0),
-    timestamp_merge_tolerance=0.003,  # in seconds
-    burn_frames: int = 500,
-    valid_height_range: Tuple[float, float] = (10.0, 800.0),
-    batch_size: int = 2000,
     batch_overlap: int = 150,
-    voxel_down_sample: float = 1.0,
-    registration_algorithm: str = "multiway",
+    batch_size: int = 2000,
+    burn_frames: int = 500,
+    floor_range: Tuple[float, float] = (1300.0, 1600.0),
     pcl_kwargs: dict = {},
+    registration_algorithm: str = "multiway",
+    registration_dir: str = "_registration",
     registration_kwargs: dict = {},
+    segmentation_dir: str = "_segmentation_tau-5",
+    tail_filter_pixels: Optional[int] = 17,  # scale of morphological opening filter to remove tail (None to skip)
+    timestamp_merge_tolerance=0.003,  # in seconds
+    valid_height_range: Tuple[float, float] = (10.0, 800.0),
+    voxel_down_sample: float = 1.0,
 ):
     pcl_kwargs = pcl_kwargs_default | pcl_kwargs
     registration_kwargs = registration_kwargs_default | registration_kwargs
     registration_dir = os.path.join(data_dir, registration_dir)
-
     save_params = locals()
+
+    if (tail_filter_pixels is not None) and (tail_filter_pixels > 0):
+        tail_filter_strels = {
+            cv2.MORPH_OPEN: cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (tail_filter_pixels, tail_filter_pixels)
+            )
+        }
+        clean_roi_kwargs = {
+            "pre_strels": tail_filter_strels,
+            "post_strels": {},
+            "fill_holes": False,
+            "use_cc": False,
+        }
+    else:
+        clean_roi_kwargs = None
+
 
     os.makedirs(registration_dir, exist_ok=True)
 
@@ -137,6 +154,14 @@ def convert_depth_to_pcl_and_register(
     for k, v in floor_distances.items():
         pcl_f[f"floor_distances/{k}"] = v
 
+    # TODO: here insert room for nframes x 4 x 4 matrices for storing all transformations
+    # this can be used for volume integration downstream without having to stash point clouds...
+    #
+    for _cam in cameras:
+        pcl_f.create_dataset(
+            f"transformations/{_cam}", (len(use_ts), 4, 4), "float64", compression="lzf"
+        )
+
     pcl_f.create_dataset(
         "xyz",
         (len(use_ts) * 8e3, 3),
@@ -186,6 +211,12 @@ def convert_depth_to_pcl_and_register(
             _cam: load_segmentation_masks(_path, read_frames[_cam], segmentation_dir)
             for _cam, _path in dat_paths.items()
         }
+        if clean_roi_kwargs is not None:
+            print("Cleaning ROI")
+            roi_dats = {
+                _cam: clean_roi(_dat, progress_bar=False, **clean_roi_kwargs)
+                for _cam, _dat in roi_dats.items()
+            }
 
         # convert everything to point clouds
         pcls = {_cam: [] for _cam in cameras}
@@ -216,7 +247,9 @@ def convert_depth_to_pcl_and_register(
             print("Using pairwise registration...")
             registration.get_transforms_pairwise(pcls, progress_bar=False)
         else:
-            raise RuntimeError(f"Did not understand registration algorithm {registration_algorithm}")
+            raise RuntimeError(
+                f"Did not understand registration algorithm {registration_algorithm}"
+            )
 
         # TODO: add volume integration as an option here...
         pcls_combined = registration.combine_pcls(pcls, progress_bar=False)
@@ -255,6 +288,10 @@ def convert_depth_to_pcl_and_register(
             pcl_f["frame_index"][pcl_count : pcl_count + npoints] = pcl_idx
 
         pcl_f["reference_node"][batch:right_edge_no_pad] = registration.reference_node
+        for _cam in cameras:
+            pcl_f[f"transformations/{_cam}"][batch:right_edge_no_pad] = registration.transforms[
+                _cam
+            ][left_pad_size : right_edge_no_pad - left_edge]
 
         pcl_count += npoints
         del pcls_combined
@@ -339,8 +376,8 @@ def fix_breakpoints_single(
                 next_frame = np.min(all_bpoints[all_bpoints > _idx])
             except:
                 next_frame = max(pcl_frame_idx)
-                
-            dct = use_ts.loc[_idx][pcl_metadata["cameras"]].astype("int").to_dict() 
+
+            dct = use_ts.loc[_idx][pcl_metadata["cameras"]].astype("int").to_dict()
             # dct = {k: [v] for k, v in dct.items()}
             masks = {
                 _cam: load_segmentation_masks(_path, dct[_cam], pcl_metadata["segmentation_dir"])
@@ -348,44 +385,44 @@ def fix_breakpoints_single(
             }
             frames = read_frames_multicam(load_paths, dct, load_dct, progress_bar=False)
             # with frame, convert to pcls, run it down...
-            
+
             source_floor_distance = float(pcl_metadata["floor_distances"][source])
-            source_bground_rem =  source_floor_distance - frames[source]
-            source_invalid_mask = np.logical_or( 
-                source_bground_rem < valid_height_range[0], 
-                source_bground_rem > valid_height_range[1]
+            source_bground_rem = source_floor_distance - frames[source]
+            source_invalid_mask = np.logical_or(
+                source_bground_rem < valid_height_range[0],
+                source_bground_rem > valid_height_range[1],
             )
             source_invalid_mask = np.logical_or(source_invalid_mask, masks[source] == 0)
             source_proj_data = frames[source].copy().astype("float")
             source_proj_data[source_invalid_mask] = np.nan
-            
+
             source_pcl = pcl_from_depth(
                 source_proj_data[0],
                 intrinsics_matrix[source],
                 post_z_shift=source_floor_distance / z_scale,
-                **pcl_metadata["pcl_kwargs"] 
+                **pcl_metadata["pcl_kwargs"],
             )
-            
+
             target_floor_distance = float(pcl_metadata["floor_distances"][target])
-            target_bground_rem =  target_floor_distance - frames[target]
-            target_invalid_mask = np.logical_or( 
-                target_bground_rem < valid_height_range[0], 
-                target_bground_rem > valid_height_range[1]
+            target_bground_rem = target_floor_distance - frames[target]
+            target_invalid_mask = np.logical_or(
+                target_bground_rem < valid_height_range[0],
+                target_bground_rem > valid_height_range[1],
             )
             target_invalid_mask = np.logical_or(target_invalid_mask, masks[target] == 0)
             target_proj_data = frames[target].copy().astype("float")
             target_proj_data[target_invalid_mask] = np.nan
-        
+
             target_pcl = pcl_from_depth(
                 target_proj_data[0],
                 intrinsics_matrix[target],
                 post_z_shift=target_floor_distance / z_scale,
-                **pcl_metadata["pcl_kwargs"] 
+                **pcl_metadata["pcl_kwargs"],
             )
-            
+
             source_xyz = trim_outliers(np.asarray(source_pcl.points))
             target_xyz = trim_outliers(np.asarray(target_pcl.points))
-            
+
             diffs.append(np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0))
             # inclusive left hand range
             # exclusive right hand (cuts into next transition)
@@ -393,11 +430,11 @@ def fix_breakpoints_single(
                 np.logical_and(pcl_frame_idx >= _idx, pcl_frame_idx < next_frame)
             ]
             frame_group.append(matches)
-        
+
         # alternatively we can get a different transform for each one
         # except we aggressively trim outliers...
         diffs = np.array(diffs)
-        
+
         if transform_aggregate:
             use_transform = np.eye(4)
             use_transform[:3, 3] = np.nanmedian(diffs, axis=0)
@@ -423,13 +460,15 @@ def fix_breakpoints_single(
                         "stop": _group[-1],
                         "transform": use_transform,
                         "pcl_idxs": _group,
-                        "pair": (target, source)
+                        "pair": (target, source),
                     }
                 )
 
-    joblib.dump(transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list_pre.p"))
-     
-        # enforce symmetry???
+    joblib.dump(
+        transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list_pre.p")
+    )
+
+    # enforce symmetry???
     if transform_aggregate and enforce_symmetry:
         print("Enforcing symmetry in breakpoint fixes...")
         uniq_pairs = list(set([_["pair"] for _ in transform_list]))
@@ -461,7 +500,7 @@ def fix_breakpoints_single(
     idxsort = np.array([_["start"] for _ in transform_list]).argsort()
     sorted_transform_list = [transform_list[i] for i in idxsort]
     odometry = np.eye(4)
-    
+
     for i in tqdm(range(len(sorted_transform_list)), desc="Correcting breakpoints"):
         odometry = odometry @ sorted_transform_list[i]["transform"]
         # align everything
@@ -474,7 +513,7 @@ def fix_breakpoints_single(
             xyz = pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)]
             _pcl = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
             _pcl = _pcl.transform(odometry)
-            pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)] = np.asarray(_pcl.points) 
+            pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)] = np.asarray(_pcl.points)
 
 
 def fix_breakpoints_combined(
@@ -571,7 +610,9 @@ def fix_breakpoints_combined(
                     }
                 )
 
-    joblib.dump(transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list_pre.p"))
+    joblib.dump(
+        transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list_pre.p")
+    )
     if transform_aggregate and enforce_symmetry:
         print("Enforcing symmetry in breakpoint fixes...")
         uniq_pairs = list(set([_["pair"] for _ in transform_list]))
@@ -603,7 +644,7 @@ def fix_breakpoints_combined(
     idxsort = np.array([_["start"] for _ in transform_list]).argsort()
     sorted_transform_list = [transform_list[i] for i in idxsort]
     odometry = np.eye(4)
-    
+
     for i in tqdm(range(len(sorted_transform_list)), desc="Correcting breakpoints"):
         odometry = odometry @ sorted_transform_list[i]["transform"]
         # align everything
@@ -664,7 +705,7 @@ def reproject_pcl_to_depth(
     max_pts = np.nanmax(pcl_f["xyz"][:100], axis=0)
     min_pts = np.nanmin(pcl_f["xyz"][:100], axis=0)
     max_pts = np.nan_to_num(max_pts, -np.inf)
-    min_pts = np.nan_to_num(min_pts, +np.inf) 
+    min_pts = np.nan_to_num(min_pts, +np.inf)
     for batch in tqdm(range(0, len(pcl_f["xyz"]), max_batch_size), desc="Getting max"):
         pts = pcl_f["xyz"][batch : batch + max_batch_size]
         u, v, z = pcl_to_pxl_coords(
@@ -816,15 +857,13 @@ def prev_even_number(x):
 def compute_scalars(
     registration_file: str,
     intrinsics_file: str,
-    batch_size: int=2000,
-    z_threshold: float=5,
-    scalar_tau: float=0.1,
-    scalar_diff_tau: float=0.05,
+    batch_size: int = 2000,
+    z_threshold: float = 5,
+    scalar_tau: float = 0.1,
+    scalar_diff_tau: float = 0.05,
 ) -> pd.DataFrame:
     # load intrinsics
-    intrinsics_matrix, distortion_coeffs = format_intrinsics(
-        toml.load(intrinsics_file)
-    )
+    intrinsics_matrix, distortion_coeffs = format_intrinsics(toml.load(intrinsics_file))
 
     # directory with registration data
     registration_dir = os.path.dirname(os.path.abspath(registration_file))
@@ -839,8 +878,7 @@ def compute_scalars(
     head_camera = cameras[0]
 
     ts_paths = {
-        os.path.join(data_dir, f"{_cam}.txt"): _cam
-        for _cam in registration_metadata["cameras"]
+        os.path.join(data_dir, f"{_cam}.txt"): _cam for _cam in registration_metadata["cameras"]
     }
     _, merged_ts = read_timestamps_multicam(
         ts_paths, merge_tolerance=registration_metadata["timestamp_merge_tolerance"]
@@ -924,7 +962,9 @@ def compute_scalars(
     df_scalars["velocity_2d_mm_s"] = velocity_2d
     df_scalars["velocity_3d_mm_s"] = velocity_3d
     df_scalars["velocity_z_mm_s"] = velocity_z
-    df_scalars["velocity_position_angle_rad_s"] = np.arctan2(df_scalars_diff["y_mean_mm"], df_scalars_diff["x_mean_mm"])
+    df_scalars["velocity_position_angle_rad_s"] = np.arctan2(
+        df_scalars_diff["y_mean_mm"], df_scalars_diff["x_mean_mm"]
+    )
     df_scalars["velocity_orientation_rad_s"] = df_scalars_diff["orientation_rad"]
     df_scalars.index.name = "frame_id"
 

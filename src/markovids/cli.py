@@ -19,63 +19,65 @@ def cli():
 # fmt: off
 @cli.command(name="registration", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_REG"})
 @click.argument("data_dir", type=click.Path(exists=True))
-@click.option("--registration-dir", type=str, default="_registration", help="Directory for output", show_envvar=True)
-@click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
-@click.option("--segmentation-dir", type=str, default="_segmentation_tau-5", show_envvar=True)
 @click.option("--background-spacing", type=int, default=500, show_envvar=True)
-@click.option("--batch-size", type=int, default=2000, show_envvar=True)
 @click.option("--batch-overlap", type=int, default=100, show_envvar=True)
-@click.option("--burn-frames", type=int, default=500, show_envvar=True)
-@click.option("--valid-height-range", type=(float, float), default=(10, 800), show_envvar=True)
-@click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
-@click.option("--registration-algorithm", type=click.Choice(["pairwise", "multiway"]), default="multiway", show_envvar=True)
-@click.option("--registration-max-correspondence-distance", type=float, default=1.0, show_envvar=True)
-@click.option("--registration-fitness-threshold", type=float, default=.25, show_envvar=True)
-@click.option("--registration-reference-future-len", type=int, default=50, show_envvar=True)
-@click.option("--registration-reference-history-len", type=int, default=25, show_envvar=True)
-@click.option("--registration-cleanup-nbs", type=int, default=7, show_envvar=True)
-@click.option("--registration-cleanup-radius", type=float, default=3.0, show_envvar=True)
-@click.option("--registration-cleanup-nbs-combined", type=int, default=25, show_envvar=True)
-@click.option("--registration-cleanup-radius-combined", type=float, default=3.0, show_envvar=True)
-@click.option("--registration-type", type=click.Choice(["p2p","p2pl","generalized"]), default="generalized", show_envvar=True)
+@click.option("--batch-size", type=int, default=2000, show_envvar=True)
 @click.option("--breakpoint-algorithm", type=click.Choice(["combined", "single"]), default="single", show_envvar=True)
 @click.option("--breakpoint-transform-aggregate", type=bool, default=True, show_envvar=True)
-@click.option("--reproject-batch-size", type=int, default=2000, show_envvar=True)
+@click.option("--burn-frames", type=int, default=500, show_envvar=True)
+@click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
+@click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
+@click.option("--registration-algorithm", type=click.Choice(["pairwise", "multiway"]), default="multiway", show_envvar=True)
+@click.option("--registration-cleanup-nbs-combined", type=int, default=25, show_envvar=True)
+@click.option("--registration-cleanup-nbs", type=int, default=7, show_envvar=True)
+@click.option("--registration-cleanup-radius-combined", type=float, default=3.0, show_envvar=True)
+@click.option("--registration-cleanup-radius", type=float, default=3.0, show_envvar=True)
+@click.option("--registration-dir", type=str, default="_registration", help="Directory for output", show_envvar=True)
+@click.option("--registration-fitness-threshold", type=float, default=.25, show_envvar=True)
+@click.option("--registration-max-correspondence-distance", type=float, default=1.0, show_envvar=True)
+@click.option("--registration-reference-future-len", type=int, default=50, show_envvar=True)
+@click.option("--registration-reference-history-len", type=int, default=25, show_envvar=True)
+@click.option("--registration-tail-filter-pixels", type=int, default=17, show_envvar=True)
+@click.option("--registration-type", type=click.Choice(["p2p","p2pl","generalized"]), default="generalized", show_envvar=True)
 @click.option("--reproject-batch-overlap", type=int, default=150, show_envvar=True)
-@click.option("--reproject-stitch-buffer", type=int, default=25, show_envvar=True)
+@click.option("--reproject-batch-size", type=int, default=2000, show_envvar=True)
 @click.option("--reproject-interpolation-distance-threshold", type=float, default=2.5, show_envvar=True)
 @click.option("--reproject-interpolation-method", type=str, default="nearest", show_envvar=True)
 @click.option("--reproject-smooth-kernel", type=(float, float, float), default=(1., .75, .75), show_envvar=True)
+@click.option("--reproject-stitch-buffer", type=int, default=25, show_envvar=True)
+@click.option("--segmentation-dir", type=str, default="_segmentation_tau-5", show_envvar=True)
+@click.option("--valid-height-range", type=(float, float), default=(10, 800), show_envvar=True)
 # fmt: on
 def cli_registration(
     data_dir,
-    registration_dir,
-    intrinsics_file,
-    segmentation_dir,
     background_spacing,
-    batch_size,
     batch_overlap,
-    burn_frames,
-    valid_height_range,
-    floor_range,
-    registration_algorithm,
-    registration_max_correspondence_distance,
-    registration_fitness_threshold,
-    registration_reference_future_len,
-    registration_reference_history_len,
-    registration_cleanup_nbs,
-    registration_cleanup_radius,
-    registration_cleanup_nbs_combined,
-    registration_cleanup_radius_combined,
-    registration_type,
+    batch_size,
     breakpoint_algorithm,
     breakpoint_transform_aggregate,
-    reproject_batch_size,
+    burn_frames,
+    floor_range,
+    intrinsics_file,
+    registration_algorithm,
+    registration_cleanup_nbs_combined,
+    registration_cleanup_nbs,
+    registration_cleanup_radius_combined,
+    registration_cleanup_radius,
+    registration_dir,
+    registration_fitness_threshold,
+    registration_max_correspondence_distance,
+    registration_reference_future_len,
+    registration_reference_history_len,
+    registration_tail_filter_pixels,
+    registration_type,
     reproject_batch_overlap,
-    reproject_stitch_buffer,
+    reproject_batch_size,
     reproject_interpolation_distance_threshold,
     reproject_interpolation_method,
     reproject_smooth_kernel,
+    reproject_stitch_buffer,
+    segmentation_dir,
+    valid_height_range,
 ):
     # SAVE PARAMETERS
     cli_params = locals()
@@ -103,14 +105,14 @@ def cli_registration(
             toml.dump(cli_params, f)
 
         registration_kwargs = {
-            "max_correspondence_distance": registration_max_correspondence_distance,
+            "cleanup_nbs_combined": registration_cleanup_nbs_combined,
+            "cleanup_nbs": registration_cleanup_nbs,
+            "cleanup_radius_combined": registration_cleanup_radius_combined,
+            "cleanup_radius": registration_cleanup_radius,
             "fitness_threshold": registration_fitness_threshold,
+            "max_correspondence_distance": registration_max_correspondence_distance,
             "reference_future_len": registration_reference_future_len,
             "reference_history_len": registration_reference_history_len,
-            "cleanup_nbs": registration_cleanup_nbs,
-            "cleanup_radius": registration_cleanup_radius,
-            "cleanup_nbs_combined": registration_cleanup_nbs_combined,
-            "cleanup_radius_combined": registration_cleanup_radius_combined,
             "registration_type": registration_type,
         }
 
@@ -119,16 +121,17 @@ def cli_registration(
         convert_depth_to_pcl_and_register(
             data_dir,
             intrinsics_file,
-            registration_dir=registration_dir,
-            segmentation_dir=segmentation_dir,
             background_spacing=background_spacing,
-            batch_size=batch_size,
             batch_overlap=batch_overlap,
+            batch_size=batch_size,
             burn_frames=burn_frames,
-            valid_height_range=valid_height_range,
             floor_range=floor_range,
             registration_algorithm=registration_algorithm,
+            registration_dir=registration_dir,
             registration_kwargs=registration_kwargs,
+            segmentation_dir=segmentation_dir,
+            tail_filter_pixels=registration_tail_filter_pixels,
+            valid_height_range=valid_height_range,
         )
     else:
         print("Registration already complete, skipping...")
