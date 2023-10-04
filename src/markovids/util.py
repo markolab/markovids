@@ -200,7 +200,7 @@ def convert_depth_to_pcl_and_register(
     frame_batches = range(0, nframes, batch_size)
 
     pcl_count = 0
-    for batch in tqdm(frame_batches[:5], desc="Conversion to PCL and registration"):
+    for batch in tqdm(frame_batches, desc="Conversion to PCL and registration"):
         left_edge = max(batch - batch_overlap, 0)
         left_pad_size = batch - left_edge
         right_edge = min(batch + batch_size + batch_overlap, nframes)
