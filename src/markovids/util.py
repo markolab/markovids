@@ -47,6 +47,8 @@ registration_kwargs_default = {
     "reference_history_len": 50,
     "cleanup_nbs": 5,
     "cleanup_nbs_combined": 15,
+    "cleanup_sigma": 2.0,
+    "cleanup_sigma_combined": 2.0,
 }
 
 
@@ -57,13 +59,15 @@ def convert_depth_to_pcl_and_register(
     batch_overlap: int = 150,
     batch_size: int = 2000,
     burn_frames: int = 500,
+    depth_frame_bilateral_filter: Tuple[float, float] = (3., 3.), # unclear if we want this yet, slow...
     floor_range: Tuple[float, float] = (1300.0, 1600.0),
     pcl_kwargs: dict = {},
-    registration_algorithm: str = "multiway",
+    pcl_floor_delta: bool = True,
+    registration_algorithm: str = "pairwise",
     registration_dir: str = "_registration",
     registration_kwargs: dict = {},
     segmentation_dir: str = "_segmentation_tau-5",
-    tail_filter_pixels: Optional[int] = 17,  # scale of morphological opening filter to remove tail (None to skip)
+    tail_filter_pixels: Optional[int] = 21,  # scale of morphological opening filter to remove tail (None to skip)
     timestamp_merge_tolerance=0.003,  # in seconds
     valid_height_range: Tuple[float, float] = (10.0, 800.0),
     voxel_down_sample: float = 1.0,
@@ -196,7 +200,7 @@ def convert_depth_to_pcl_and_register(
     frame_batches = range(0, nframes, batch_size)
 
     pcl_count = 0
-    for batch in tqdm(frame_batches, desc="Conversion to PCL and registration"):
+    for batch in tqdm(frame_batches[:5], desc="Conversion to PCL and registration"):
         left_edge = max(batch - batch_overlap, 0)
         left_pad_size = batch - left_edge
         right_edge = min(batch + batch_size + batch_overlap, nframes)
@@ -222,7 +226,10 @@ def convert_depth_to_pcl_and_register(
         pcls = {_cam: [] for _cam in cameras}
         for _cam in tqdm(cameras, desc="Converting to point clouds", disable=True):
             for _frame in range(len(cur_ts)):
+                # bilateral filter depth frames??
                 use_dat = raw_dat[_cam][_frame].copy().astype("float32")
+                if depth_frame_bilateral_filter is not None:
+                    use_dat = cv2.bilateralFilter(use_dat, -1, *depth_frame_bilateral_filter)
                 use_roi = roi_dats[_cam][_frame]
                 bground_rem_dat = floor_distances[_cam] - use_dat
                 invalid_mask = np.logical_or(
@@ -233,7 +240,7 @@ def convert_depth_to_pcl_and_register(
                 use_pcl = pcl_from_depth(
                     use_dat,
                     intrinsics_matrix[_cam],
-                    post_z_shift=floor_distances[_cam] / z_scale,
+                    post_z_shift=floor_distances[_cam] / z_scale if pcl_floor_delta else None,
                     **pcl_kwargs,
                 )
                 pcls[_cam].append(use_pcl)

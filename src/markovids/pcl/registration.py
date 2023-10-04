@@ -41,10 +41,12 @@ class DepthVideoPairwiseRegister:
         registration_type="p2p",
         # pairwise_criteria=default_criteria,
         # pairwise_estimation=default_estimation,
-        cleanup_nbs=21,
+        cleanup_nbs=7,
         cleanup_radius=3.0,
-        cleanup_nbs_combined=21,
+        cleanup_sigma=2.0,
+        cleanup_nbs_combined=25,
         cleanup_radius_combined=3.0,
+        cleanup_sigma_combined=2.0,
         z_shift=True,
         nsig=2,
     ):
@@ -71,8 +73,10 @@ class DepthVideoPairwiseRegister:
         self.current_reference_weight = current_reference_weight
         self.cleanup_nbs = cleanup_nbs
         self.cleanup_radius = cleanup_radius
+        self.cleanup_sigma = cleanup_sigma
         self.cleanup_nbs_combined = cleanup_nbs_combined
         self.cleanup_radius_combined = cleanup_radius_combined
+        self.cleanup_sigma_combined = cleanup_sigma_combined
         self.reference_debounce = reference_debounce
         self.reference_history = reference_history_len
         self.reference_future = reference_future_len
@@ -435,7 +439,8 @@ class DepthVideoPairwiseRegister:
                 use_pcl = pcls[_cam][_frame].transform(use_transform)
 
                 if self.cleanup_nbs is not None:
-                    cl, ind = use_pcl.remove_radius_outlier(self.cleanup_nbs, self.cleanup_radius)
+                    # cl, ind = use_pcl.remove_radius_outlier(self.cleanup_nbs, self.cleanup_radius)
+                    cl, ind = use_pcl.remove_statistical_outlier(self.cleanup_nbs, self.cleanup_sigma)
                     use_pcl = use_pcl.select_by_index(ind)
                     # pcl_combined += use_pcl
                 pcl_combined += use_pcl
@@ -443,8 +448,11 @@ class DepthVideoPairwiseRegister:
             if len(pcl_combined.points) < 10:
                 pcls_combined.append(pcl_combined)
             elif self.cleanup_nbs_combined is not None:
-                cl, ind = pcl_combined.remove_radius_outlier(
-                    self.cleanup_nbs_combined, self.cleanup_radius_combined
+                # cl, ind = pcl_combined.remove_radius_outlier(
+                #     self.cleanup_nbs_combined, self.cleanup_radius_combined
+                # )
+                cl, ind = pcl_combined.remove_statistical_outlier(
+                    self.cleanup_nbs_combined, self.cleanup_sigma_combined
                 )
                 pcl_combined = pcl_combined.select_by_index(ind)
                 pcls_combined.append(pcl_combined)

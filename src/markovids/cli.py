@@ -32,12 +32,14 @@ def cli():
 @click.option("--registration-cleanup-nbs", type=int, default=7, show_envvar=True)
 @click.option("--registration-cleanup-radius-combined", type=float, default=3.0, show_envvar=True)
 @click.option("--registration-cleanup-radius", type=float, default=3.0, show_envvar=True)
+@click.option("--registration-cleanup-sigma", type=float, default=2.0, show_envvar=True)
+@click.option("--registration-cleanup-sigma-combined", type=float, default=2.0, show_envvar=True)
 @click.option("--registration-dir", type=str, default="_registration", help="Directory for output", show_envvar=True)
 @click.option("--registration-fitness-threshold", type=float, default=.25, show_envvar=True)
 @click.option("--registration-max-correspondence-distance", type=float, default=1.0, show_envvar=True)
 @click.option("--registration-reference-future-len", type=int, default=50, show_envvar=True)
 @click.option("--registration-reference-history-len", type=int, default=25, show_envvar=True)
-@click.option("--registration-tail-filter-pixels", type=int, default=17, show_envvar=True)
+@click.option("--registration-tail-filter-pixels", type=int, default=21, show_envvar=True) # previously 17
 @click.option("--registration-type", type=click.Choice(["p2p","p2pl","generalized"]), default="generalized", show_envvar=True)
 @click.option("--reproject-batch-overlap", type=int, default=150, show_envvar=True)
 @click.option("--reproject-batch-size", type=int, default=2000, show_envvar=True)
@@ -63,6 +65,8 @@ def cli_registration(
     registration_cleanup_nbs,
     registration_cleanup_radius_combined,
     registration_cleanup_radius,
+    registration_cleanup_sigma_combined,
+    registration_cleanup_sigma,
     registration_dir,
     registration_fitness_threshold,
     registration_max_correspondence_distance,
@@ -109,6 +113,8 @@ def cli_registration(
             "cleanup_nbs": registration_cleanup_nbs,
             "cleanup_radius_combined": registration_cleanup_radius_combined,
             "cleanup_radius": registration_cleanup_radius,
+            "cleanup_sigma_combined": registration_cleanup_sigma_combined,
+            "cleanup_sigma": registration_cleanup_sigma,
             "fitness_threshold": registration_fitness_threshold,
             "max_correspondence_distance": registration_max_correspondence_distance,
             "reference_future_len": registration_reference_future_len,
