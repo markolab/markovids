@@ -189,7 +189,7 @@ def cli_registration(
 @click.option("--scalar-diff-tau", type=float, default=.05, show_envvar=True)
 @click.option("--scalar-dir", type=str, default="_scalars", help="Directory for output", show_envvar=True)
 @click.option("--scalar-tau", type=float, default=.1, show_envvar=True)
-@click.option("--z-threshold", type=float, default=5., show_envvar=True)
+@click.option("--z-range", type=(float, float), default=(5., 1000.), show_envvar=True)
 # fmt: on
 def cli_compute_scalars(
     registration_file,
@@ -198,7 +198,7 @@ def cli_compute_scalars(
     scalar_diff_tau,
     scalar_dir,
     scalar_tau,
-    z_threshold,
+    z_range,
 ):
     cli_params = locals()
     
@@ -211,7 +211,7 @@ def cli_compute_scalars(
         batch_size=batch_size,
         scalar_diff_tau=scalar_diff_tau,
         scalar_tau=scalar_tau,
-        z_threshold=z_threshold,
+        z_range=z_range,
     )
 
     df_scalars.to_parquet(os.path.join(data_dir, scalar_dir, "scalars.parquet"))

@@ -867,7 +867,7 @@ def compute_scalars(
     batch_size: int = 2000,
     scalar_diff_tau: float = 0.05,
     scalar_tau: float = 0.1,
-    z_threshold: float = 5,
+    z_range: Tuple[float, float] = (5, 1000),
 ) -> pd.DataFrame:
     # load intrinsics
     intrinsics_matrix, distortion_coeffs = format_intrinsics(toml.load(intrinsics_file))
@@ -907,6 +907,7 @@ def compute_scalars(
         frame_ids = f["frame_id"][()]
 
     centroid = np.full((nframes, 3), np.nan, dtype="float32")
+    centroid_px = np.full((nframes, 2), np.nan, dtype="float32")
     orientation = np.full((nframes,), np.nan, dtype="float32")
     axis_length = np.full((nframes, 2), np.nan, dtype="float32")
     sigma = np.full((nframes, 3), np.nan, dtype="float32")
@@ -918,7 +919,18 @@ def compute_scalars(
             working_range = range(_batch, min(_batch + batch_size, nframes))
             frame_batch = f["frames"][working_range]
             for _id, _frame in zip(working_range, frame_batch):
-                mouse_mask = _frame > z_threshold
+                mouse_mask = np.logical_and(_frame > z_range[0], _frame < z_range[1])
+
+                # use contour for getting centroid, etc.
+                cnts, hierarchy = cv2.findContours(
+                    mouse_mask.astype("uint8"), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+                )
+                tmp = np.array([cv2.contourArea(x) for x in cnts])
+                mouse_contour = cnts[tmp.argmax()]
+                new_mask = np.zeros(mouse_mask.shape, dtype="uint8")
+                new_mask = cv2.drawContours(new_mask, [mouse_contour], -1, color=1, thickness=cv2.FILLED)
+                mouse_mask = new_mask
+
                 v, u = np.where(mouse_mask)
                 z = _frame[v, u]
                 # pack into array and project to world coordinates for centroid
@@ -926,18 +938,23 @@ def compute_scalars(
                 xyz = project_world_coordinates(
                     uvz, floor_distance=floor_distance, cx=cx, cy=cy, fx=fx, fy=fy
                 )
-                features = im_moment_features(mouse_mask.astype("uint8"))
                 centroid[_id] = np.nanmean(xyz, axis=0)
                 sigma[_id] = np.nanstd(xyz, axis=0)
-                # orientation and axis length are in pixels
+
+                # use contour moments here...
+                features = im_moment_features(mouse_contour)
+                # here, centroid orientation and axis length are in pixels
+                centroid_px[_id] = features["centroid"]
                 orientation[_id] = features["orientation"]
                 axis_length[_id] = features["axis_length"]
 
-    all_data = np.hstack([centroid, sigma, orientation[:, None], axis_length])
+    all_data = np.hstack([centroid, centroid_px, sigma, orientation[:, None], axis_length])
     all_columns = [
         "x_mean_mm",
         "y_mean_mm",
         "z_mean_mm",
+        "x_mean_px",
+        "y_mean_px",
         "x_std_mm",
         "y_std_mm",
         "z_std_mm",
@@ -950,8 +967,7 @@ def compute_scalars(
     scalar_diff_tau_samples = np.round(scalar_diff_tau * fps).astype("int")
 
     df_scalars = pd.DataFrame(all_data, columns=all_columns, index=frame_ids)
-    df_scalars["orientation_rad"] *= 2
-    df_scalars["orientation_rad"] = np.unwrap(df_scalars["orientation_rad"])
+    df_scalars["orientation_rad"] = np.unwrap(df_scalars["orientation_rad"], period=np.pi) + np.pi
     df_scalars["timestamps"] = merged_ts.loc[df_scalars.index, "system_timestamp"]
     df_scalars = df_scalars.rolling(scalar_tau_samples, 1, True).mean()
 
