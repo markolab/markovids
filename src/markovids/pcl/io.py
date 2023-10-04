@@ -73,7 +73,7 @@ def depth_from_pcl(
     z_clip=1e-3,
     z_adjust=None,
     fill_value=0.0,
-    buffer=200.0,
+    buffer=200,
     transform_correct=False,
     transform_neighborhood=1,
 ):
@@ -87,7 +87,7 @@ def depth_from_pcl(
     except AttributeError:
         points = np.asarray(pcl.points)
 
-    depth_image = np.zeros((height, width), "float")
+    depth_image = np.zeros((height + buffer, width + buffer), "float")
     depth_image[:] = fill_value
 
     if post_scale is not None:
@@ -106,10 +106,10 @@ def depth_from_pcl(
 
     z *= z_scale
 
-    u += buffer
-    v += buffer
-    u = np.clip(u, 0, width - 1)
-    v = np.clip(v, 0, height - 1)
+    u += buffer // 2
+    v += buffer // 2
+    u = np.clip(u, 0, width + buffer - 1)
+    v = np.clip(v, 0, height + buffer - 1)
 
     if transform_correct:
         # hack to correct for rounding errors post-transformation

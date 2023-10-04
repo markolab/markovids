@@ -663,17 +663,17 @@ def fix_breakpoints_combined(
 def reproject_pcl_to_depth(
     registration_file: str,
     intrinsics_file: str,
-    stitch_buffer: int = 10,
-    batch_size: int = 2000,
     batch_overlap: int = 50,
+    batch_size: int = 2000,
+    centroid_outlier_trim_nsigma: int = 5,
     interpolation_distance_threshold: float = 1.75,
-    interpolation_method: str = "nearest",
     interpolation_fill_value: float = np.nan,
-    z_clip: float = 0,
+    interpolation_method: str = "nearest",
     project_xy: bool = True,
     smooth_kernel: Tuple[float, float, float] = (1.0, 0.75, 0.75),
+    stitch_buffer: int = 10,
     visualize_results: bool = True,
-    centroid_outlier_trim_nsigma: int = 5,
+    z_clip: float = 0,
 ):
     save_metadata = locals()
     save_metadata["complete"] = False
@@ -858,9 +858,9 @@ def compute_scalars(
     registration_file: str,
     intrinsics_file: str,
     batch_size: int = 2000,
-    z_threshold: float = 5,
-    scalar_tau: float = 0.1,
     scalar_diff_tau: float = 0.05,
+    scalar_tau: float = 0.1,
+    z_threshold: float = 5,
 ) -> pd.DataFrame:
     # load intrinsics
     intrinsics_matrix, distortion_coeffs = format_intrinsics(toml.load(intrinsics_file))

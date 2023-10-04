@@ -22,7 +22,7 @@ def cli():
 @click.option("--background-spacing", type=int, default=500, show_envvar=True)
 @click.option("--batch-overlap", type=int, default=100, show_envvar=True)
 @click.option("--batch-size", type=int, default=2000, show_envvar=True)
-@click.option("--breakpoint-algorithm", type=click.Choice(["combined", "single"]), default="single", show_envvar=True)
+@click.option("--breakpoint-algorithm", type=click.Choice(["combined", "single"]), default="combined", show_envvar=True)
 @click.option("--breakpoint-transform-aggregate", type=bool, default=True, show_envvar=True)
 @click.option("--burn-frames", type=int, default=500, show_envvar=True)
 @click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
@@ -178,21 +178,21 @@ def cli_registration(
 # fmt: off
 @cli.command(name="compute-scalars", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_REG"})
 @click.argument("registration_file", type=click.Path(exists=True))
-@click.option("--scalar-dir", type=str, default="_scalars", help="Directory for output", show_envvar=True)
-@click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
 @click.option("--batch-size", type=int, default=3000, show_envvar=True)
-@click.option("--z-threshold", type=float, default=5., show_envvar=True)
-@click.option("--scalar-tau", type=float, default=.1, show_envvar=True)
+@click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
 @click.option("--scalar-diff-tau", type=float, default=.05, show_envvar=True)
+@click.option("--scalar-dir", type=str, default="_scalars", help="Directory for output", show_envvar=True)
+@click.option("--scalar-tau", type=float, default=.1, show_envvar=True)
+@click.option("--z-threshold", type=float, default=5., show_envvar=True)
 # fmt: on
 def cli_compute_scalars(
     registration_file,
-    scalar_dir,
-    intrinsics_file,
     batch_size,
-    z_threshold,
-    scalar_tau,
+    intrinsics_file,
     scalar_diff_tau,
+    scalar_dir,
+    scalar_tau,
+    z_threshold,
 ):
     cli_params = locals()
     
@@ -203,9 +203,9 @@ def cli_compute_scalars(
         registration_file,
         intrinsics_file,
         batch_size=batch_size,
-        z_threshold=z_threshold,
-        scalar_tau=scalar_tau,
         scalar_diff_tau=scalar_diff_tau,
+        scalar_tau=scalar_tau,
+        z_threshold=z_threshold,
     )
 
     df_scalars.to_parquet(os.path.join(data_dir, scalar_dir, "scalars.parquet"))
