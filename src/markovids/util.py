@@ -68,6 +68,7 @@ def convert_depth_to_pcl_and_register(
     registration_kwargs: dict = {},
     segmentation_dir: str = "_segmentation_tau-5",
     tail_filter_pixels: Optional[int] = 21,  # scale of morphological opening filter to remove tail (None to skip)
+    test_run_batches: int = -1,
     timestamp_merge_tolerance=0.003,  # in seconds
     valid_height_range: Tuple[float, float] = (10.0, 800.0),
     voxel_down_sample: float = 1.0,
@@ -197,7 +198,10 @@ def convert_depth_to_pcl_and_register(
     save_metadata["dat_paths"] = dat_paths
     save_metadata["ts_paths"] = ts_paths
 
-    frame_batches = range(0, nframes, batch_size)
+    if test_run_batches <= 0:
+        frame_batches = range(0, nframes, batch_size)
+    else:
+        frame_batches = range(0, batch_size * test_run_batches, batch_size)
 
     pcl_count = 0
     for batch in tqdm(frame_batches, desc="Conversion to PCL and registration"):
@@ -491,6 +495,7 @@ def fix_breakpoints_single(
         new_transform = {}
         for (target, source), v in uniq_transform.items():
             try:
+                # TODO: simply invert...
                 # ONLY REFLECT THE TRANSLATION COMPONENT!!!!!
                 reflection = uniq_transform[(source, target)].copy()
                 reflection[:3, 3] *= -1

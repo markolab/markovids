@@ -48,6 +48,7 @@ def cli():
 @click.option("--reproject-smooth-kernel", type=(float, float, float), default=(1., .75, .75), show_envvar=True)
 @click.option("--reproject-stitch-buffer", type=int, default=25, show_envvar=True)
 @click.option("--segmentation-dir", type=str, default="_segmentation_tau-5", show_envvar=True)
+@click.option("--test-run-batches", type=int, default=-1, show_envvar=True)
 @click.option("--valid-height-range", type=(float, float), default=(10, 800), show_envvar=True)
 # fmt: on
 def cli_registration(
@@ -81,6 +82,7 @@ def cli_registration(
     reproject_smooth_kernel,
     reproject_stitch_buffer,
     segmentation_dir,
+    test_run_batches,
     valid_height_range,
 ):
     # SAVE PARAMETERS
@@ -137,6 +139,7 @@ def cli_registration(
             registration_kwargs=registration_kwargs,
             segmentation_dir=segmentation_dir,
             tail_filter_pixels=registration_tail_filter_pixels,
+            test_run_batches = test_run_batches
             valid_height_range=valid_height_range,
         )
     else:

@@ -209,6 +209,8 @@ class DepthVideoPairwiseRegister:
                     _cam: None for _cam in cams  # reset if our reference switches...
                 }
 
+            # TODO we do not have checks for len target PCL, need to add
+            # to prevent open3d crashes
             self.reference_node.append(reference_node)
             target_pcl = pcls[reference_node][_frame]
             self.transforms[reference_node][_frame] = np.eye(4)  # set to identity
