@@ -228,8 +228,8 @@ def convert_depth_to_pcl_and_register(
             for _frame in range(len(cur_ts)):
                 # bilateral filter depth frames??
                 use_dat = raw_dat[_cam][_frame].copy().astype("float32")
-                # if depth_frame_bilateral_filter is not None:
-                #     use_dat = cv2.bilateralFilter(use_dat, -1, *depth_frame_bilateral_filter)
+                if depth_frame_bilateral_filter is not None:
+                    use_dat = cv2.bilateralFilter(use_dat, -1, *depth_frame_bilateral_filter)
                 use_roi = roi_dats[_cam][_frame]
                 bground_rem_dat = floor_distances[_cam] - use_dat
                 invalid_mask = np.logical_or(
