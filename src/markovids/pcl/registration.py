@@ -12,14 +12,14 @@ default_criteria = o3d.pipelines.registration.ICPConvergenceCriteria(
 )
 
 # NO SCALING
-default_estimation_p2p = o3d.pipelines.registration.TransformationEstimationPointToPoint(
-    with_scaling=False
+default_estimation_p2p = (
+    o3d.pipelines.registration.TransformationEstimationPointToPoint(with_scaling=False)
 )
 default_estimation_p2pl = o3d.pipelines.registration.TransformationEstimationPointToPlane(
     # with_scaling=False
 )
-default_estimation_general = o3d.pipelines.registration.TransformationEstimationForGeneralizedICP(
-    epsilon=1e-3
+default_estimation_general = (
+    o3d.pipelines.registration.TransformationEstimationForGeneralizedICP(epsilon=1e-3)
 )
 
 
@@ -60,7 +60,9 @@ class DepthVideoPairwiseRegister:
             pairwise_criteria = default_criteria
             pairwise_estimation = default_estimation_general
         else:
-            raise RuntimeError(f"Did not understand registration type {registration_type}")
+            raise RuntimeError(
+                f"Did not understand registration type {registration_type}"
+            )
 
         self.pairwise_registration_options = {
             "max_correspondence_distance": max_correspondence_distance,
@@ -112,8 +114,12 @@ class DepthVideoPairwiseRegister:
             for k, v in npoints_pd.items()
         }
         self.weights_mu = npoints_mu
-        self.weights_plus_ci = {k: v + self.nsig * npoints_sig[k] for k, v in npoints_mu.items()}
-        self.weights_minus_ci = {k: v - self.nsig * npoints_sig[k] for k, v in npoints_mu.items()}
+        self.weights_plus_ci = {
+            k: v + self.nsig * npoints_sig[k] for k, v in npoints_mu.items()
+        }
+        self.weights_minus_ci = {
+            k: v - self.nsig * npoints_sig[k] for k, v in npoints_mu.items()
+        }
 
         # filter the array with a causal boxcar filter to capture history
         # filter the reversed array with the same filter to capture future
@@ -132,13 +138,17 @@ class DepthVideoPairwiseRegister:
 
         # initialize variables we need to keep around
         self.current_transform = {_cam: None for _cam in cams}
-        self.transforms = {_cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams}
+        self.transforms = {
+            _cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams
+        }
         self.fitness = {_cam: np.full((npcls,), np.nan, dtype="float") for _cam in cams}
         self.reference_node = []
         # reference_node = None
 
         # initialize a transform for each frame, nan = skip transform
-        transforms = {_cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams}
+        transforms = {
+            _cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams
+        }
         init_weights = {_cam: self.weights_mu[_cam][0] for _cam in cams}
         reference_node = max(init_weights, key=init_weights.get)
         previous_reference_node_proposal = reference_node
@@ -153,7 +163,8 @@ class DepthVideoPairwiseRegister:
             npoints = {_cam: self.npoints[_cam][_frame] for _cam in cams}
             if _frame > 0:
                 npoints_retain = {
-                    _cam: self.npoints[_cam][_frame] / (self.npoints[_cam][_frame - 1] + 1e-3)
+                    _cam: self.npoints[_cam][_frame]
+                    / (self.npoints[_cam][_frame - 1] + 1e-3)
                     for _cam in cams
                 }
             else:
@@ -191,7 +202,9 @@ class DepthVideoPairwiseRegister:
                 reference_node = reference_node_proposal
                 reference_debounce_count = 0
 
-            if (len(self.reference_node) > 0) and (reference_node != self.reference_node[-1]):
+            if (len(self.reference_node) > 0) and (
+                reference_node != self.reference_node[-1]
+            ):
                 self.current_transform = {
                     _cam: None for _cam in cams  # reset if our reference switches...
                 }
@@ -248,13 +261,17 @@ class DepthVideoPairwiseRegister:
 
         # initialize variables we need to keep around
         self.current_transform = {_cam: None for _cam in cams}
-        self.transforms = {_cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams}
+        self.transforms = {
+            _cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams
+        }
         self.fitness = {_cam: np.full((npcls,), np.nan, dtype="float") for _cam in cams}
         self.reference_node = []
         # reference_node = None
 
         # initialize a transform for each frame, nan = skip transform
-        transforms = {_cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams}
+        transforms = {
+            _cam: np.full((npcls, 4, 4), np.nan, dtype="float") for _cam in cams
+        }
         init_weights = {_cam: self.weights_mu[_cam][0] for _cam in cams}
         reference_node = max(init_weights, key=init_weights.get)
         previous_reference_node_proposal = reference_node
@@ -269,7 +286,8 @@ class DepthVideoPairwiseRegister:
             npoints = {_cam: self.npoints[_cam][_frame] for _cam in cams}
             if _frame > 0:
                 npoints_retain = {
-                    _cam: self.npoints[_cam][_frame] / (self.npoints[_cam][_frame - 1] + 1e-3)
+                    _cam: self.npoints[_cam][_frame]
+                    / (self.npoints[_cam][_frame - 1] + 1e-3)
                     for _cam in cams
                 }
             else:
@@ -307,7 +325,9 @@ class DepthVideoPairwiseRegister:
                 reference_node = reference_node_proposal
                 reference_debounce_count = 0
 
-            if (len(self.reference_node) > 0) and (reference_node != self.reference_node[-1]):
+            if (len(self.reference_node) > 0) and (
+                reference_node != self.reference_node[-1]
+            ):
                 self.current_transform = {
                     _cam: None for _cam in cams  # reset if our reference switches...
                 }
@@ -331,7 +351,7 @@ class DepthVideoPairwiseRegister:
             pose_graph_cams = [reference_node]
             target_id = 0
             offset1 = 1
-            
+
             for _cam_id, _cam1 in enumerate(nontarget_cams):
                 use_pcl = pcls[_cam1][_frame]
 
@@ -381,13 +401,13 @@ class DepthVideoPairwiseRegister:
                 # so we can recover cam name post-optimization
                 pose_graph_cams.append(_cam1)
                 offset2 = 1
-                for _cam2 in nontarget_cams[_cam_id + 1:]:
+                for _cam2 in nontarget_cams[_cam_id + 1 :]:
                     use_pcl2 = pcls[_cam2][_frame]
-                    
+
                     # now target is use_pcl1
                     if len(use_pcl2.points) < self.min_npoints:
                         # print("skip2")
-                        continue 
+                        continue
 
                     # loop closure
                     dct = pairwise_registration(
@@ -397,18 +417,22 @@ class DepthVideoPairwiseRegister:
                         compute_information=True,
                         **self.pairwise_registration_options,
                     )
-                    
+
                     fitness = dct["fitness"]
                     transform = dct["transformation"]
-                    information = dct["information"] 
+                    information = dct["information"]
 
                     pose_graph.edges.append(
                         o3d.pipelines.registration.PoseGraphEdge(
-                            offset1 + offset2, offset1, transform, information, uncertain=True
+                            offset1 + offset2,
+                            offset1,
+                            transform,
+                            information,
+                            uncertain=True,
                         )
                     )
 
-                    offset2 += 1 
+                    offset2 += 1
                 offset1 += 1
 
             # need effective backup in case of failure (1 camera only, e.g.)...
@@ -428,7 +452,9 @@ class DepthVideoPairwiseRegister:
         npcls = len(pcls[cams[0]])
         pcls_combined = []
 
-        for _frame in tqdm(range(npcls), disable=not progress_bar, desc="Stitching PCLs"):
+        for _frame in tqdm(
+            range(npcls), disable=not progress_bar, desc="Stitching PCLs"
+        ):
             pcl_combined = o3d.geometry.PointCloud()
             for _cam in cams:
                 use_transform = self.transforms[_cam][_frame]
@@ -440,7 +466,9 @@ class DepthVideoPairwiseRegister:
 
                 if self.cleanup_nbs is not None:
                     # cl, ind = use_pcl.remove_radius_outlier(self.cleanup_nbs, self.cleanup_radius)
-                    cl, ind = use_pcl.remove_statistical_outlier(self.cleanup_nbs, self.cleanup_sigma)
+                    cl, ind = use_pcl.remove_statistical_outlier(
+                        self.cleanup_nbs, self.cleanup_sigma
+                    )
                     use_pcl = use_pcl.select_by_index(ind)
                     # pcl_combined += use_pcl
                 pcl_combined += use_pcl
@@ -492,14 +520,25 @@ def pairwise_registration(
             criteria,
         )
     elif type(estimation).__name__ == "TransformationEstimationForGeneralizedICP":
-        _result = o3d.pipelines.registration.registration_generalized_icp(
-            source,
-            target,
-            max_correspondence_distance,
-            init_transformation,
-            estimation,
-            criteria,
-        )
+        try:
+            _result = o3d.pipelines.registration.registration_generalized_icp(
+                source,
+                target,
+                max_correspondence_distance,
+                init_transformation,
+                estimation,
+                criteria,
+            )
+        except RuntimeError as e:
+            # occassionally we drop out here due to mysterious missing covariances...
+            print(e)
+            print(source)
+            print(target)
+            return {
+                "fitness": -np.inf,
+                "inlier_rmse": -np.inf,
+                "transformation": init_transformation,
+            }
     else:
         RuntimeError(f"Did not understand registration type: {estimation.__name__}")
 
@@ -514,8 +553,10 @@ def pairwise_registration(
     }
 
     if compute_information:
-        information_icp = o3d.pipelines.registration.get_information_matrix_from_point_clouds(
-            source, target, max_correspondence_distance * 1.4, dct["transformation"]
+        information_icp = (
+            o3d.pipelines.registration.get_information_matrix_from_point_clouds(
+                source, target, max_correspondence_distance * 1.4, dct["transformation"]
+            )
         )
         dct["information"] = np.array(information_icp)
     return dct
