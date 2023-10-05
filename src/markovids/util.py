@@ -262,8 +262,15 @@ def convert_depth_to_pcl_and_register(
                 f"Did not understand registration algorithm {registration_algorithm}"
             )
 
-        # TODO: add volume integration as an option here...
+        # TODO: remove
+        print(len(pcls[cameras[0]]))
+        print(len(pcls[cameras[1]]))
+        print(len(pcls[cameras[2]]))
+         
         pcls_combined = registration.combine_pcls(pcls, progress_bar=False)
+
+        # TODO: remove
+        print(len(pcls_combined))
 
         # farthest point downsample???
         for i, _pcl in enumerate(pcls_combined):
@@ -544,14 +551,24 @@ def fix_breakpoints_combined(
     for i in tqdm(range(len(pcl_f["reference_node"])), desc="Finding breakpoints..."):
         source = pcl_f["reference_node"][i].decode()
         if source != target:
-            transforms[(target, source)].append(pcl_frame_idx[i])
+            try:
+                transforms[(target, source)].append(pcl_frame_idx[i])
+            except IndexError:
+                break
+            # DON'T FORGET TO REMOVE AFTER DEBUGGING
         target = source
 
+
+    print(transforms)
     all_bpoints = np.concatenate(list(transforms.values()))
     all_bpoints = all_bpoints[all_bpoints.argsort()]
 
     # store for later, may need to nan out
-    pcl_f.create_dataset("bpoints", data=all_bpoints, compression="lzf")
+    try:
+        pcl_f.create_dataset("bpoints", data=all_bpoints, compression="lzf")
+    except ValueError:
+        del pcl_f["bpoints"]
+        pcl_f.create_dataset("bpoints", data=all_bpoints, compression="lzf")
 
     transform_list = []
     for (target, source), pcl_idxs in tqdm(transforms.items(), desc="Getting transforms"):
@@ -572,6 +589,11 @@ def fix_breakpoints_combined(
             )
             source_read_idx = np.flatnonzero(pcl_coord_idx == _idx)
 
+            #TODO: remove
+            print(target_read_idx)
+            print(source_read_idx)
+            print(next_frame)
+
             # use neighboring frames to we don't mess up???
             source_xyz = pcl_f["xyz"][slice(source_read_idx[0], source_read_idx[-1])]
             source_xyz = source_xyz[~np.isnan(source_xyz).any(axis=1)]  # remove nans
@@ -583,6 +605,7 @@ def fix_breakpoints_combined(
 
             # be careful since nans will propagate...
             diffs.append(np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0))
+            print(diffs[-1])
             # inclusive left hand range
             # exclusive right hand (cuts into next transition)
             matches = pcl_frame_idx[
@@ -657,6 +680,7 @@ def fix_breakpoints_combined(
     sorted_transform_list = [transform_list[i] for i in idxsort]
     odometry = np.eye(4)
 
+    # TODO: remove
     for i in tqdm(range(len(sorted_transform_list)), desc="Correcting breakpoints"):
         odometry = odometry @ sorted_transform_list[i]["transform"]
         # align everything

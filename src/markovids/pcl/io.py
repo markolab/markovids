@@ -6,7 +6,7 @@ def pcl_from_depth(
     depth_image,
     intrinsic_matrix,
     estimate_normals=True,
-    estimate_covariances=True,
+    # estimate_covariances=True,
     z_scale=4.0,
     is_tensor=False,
     project_xy=True,
@@ -62,8 +62,8 @@ def pcl_from_depth(
     if estimate_normals:
         pcl.estimate_normals(o3d.geometry.KDTreeSearchParamKNN(knn=normal_nn))
 
-    if estimate_covariances:
-        pcl.estimate_covariances(o3d.geometry.KDTreeSearchParamKNN(knn=normal_nn))
+    # if estimate_covariances:
+    #     pcl.estimate_covariances(o3d.geometry.KDTreeSearchParamKNN(knn=normal_nn))
 
     return pcl
 
