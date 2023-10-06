@@ -708,7 +708,6 @@ def fix_breakpoints_combined(
     sorted_transform_list = [transform_list[i] for i in idxsort]
     odometry = np.eye(4)
 
-    # TODO: remove
     for i in tqdm(range(len(sorted_transform_list)), desc="Correcting breakpoints"):
         odometry = odometry @ sorted_transform_list[i]["transform"]
         # align everything
@@ -718,6 +717,9 @@ def fix_breakpoints_combined(
         use_coord_index = pcl_coord_idx[mask_array]
         for _pcl_idx in read_pcls:
             pcl_read_idx = np.flatnonzero(_pcl_idx == use_coord_index) + adj
+            # skip if there's no point cloud to fix...
+            if len(pcl_read_idx) == 0:
+                continue
             xyz = pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)]
             _pcl = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
             _pcl = _pcl.transform(odometry)
