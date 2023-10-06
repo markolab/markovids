@@ -192,7 +192,6 @@ class DepthVideoPairwiseRegister:
             # weights_minus_ci = {_cam: self.weights_minus_ci[_cam][_frame] for _cam in cams}
             # reference_node_proposal = max(weights, key=weights.get)
 
-            
             if (reference_node_proposal != reference_node) and (
                 reference_node_proposal == previous_reference_node_proposal
             ):
@@ -218,7 +217,7 @@ class DepthVideoPairwiseRegister:
             target_pcl = pcls[reference_node][_frame]
             self.transforms[reference_node][_frame] = np.eye(4)  # set to identity
 
-            if len(target_pcl) < self.reference_min_npoints:
+            if len(target_pcl.points) < self.reference_min_npoints:
                 warnings.warn(f"Target point cloud from {reference_node} < min_npoints at frame {_frame}")
 
             nontarget_cams = [_cam for _cam in cams if _cam is not reference_node]
