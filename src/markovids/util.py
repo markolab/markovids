@@ -35,6 +35,7 @@ import gc
 import copy
 import joblib
 import pandas as pd
+import warnings
 
 o3d.utility.set_verbosity_level(o3d.utility.Error)
 
@@ -182,6 +183,7 @@ def convert_depth_to_pcl_and_register(
         compression="lzf",
     )
     pcl_f.create_dataset("reference_node", (len(use_ts),), str_dt, compression="lzf")
+    pcl_f.create_dataset("reference_frame_index", (len(use_ts),), "uint32", compression="lzf")
 
     for k, v in registration_kwargs.items():
         if v is not None:
@@ -288,6 +290,10 @@ def convert_depth_to_pcl_and_register(
 
         _tmp = [np.asarray(pcl.points) for pcl in pcls_combined]
         xyz = np.concatenate(_tmp)
+
+        print(_tmp)
+        print(xyz.shape)
+
         npoints = xyz.shape[0]
         frame_index = cur_ts.index[
             left_pad_size : right_edge_no_pad - left_edge
@@ -310,6 +316,7 @@ def convert_depth_to_pcl_and_register(
             pcl_f["xyz"][pcl_count : pcl_count + npoints, :] = xyz
             pcl_f["frame_index"][pcl_count : pcl_count + npoints] = pcl_idx
 
+        pcl_f["reference_frame_index"][batch:right_edge_no_pad] = frame_index
         pcl_f["reference_node"][batch:right_edge_no_pad] = registration.reference_node
         for _cam in cameras:
             pcl_f[f"transformations/{_cam}"][batch:right_edge_no_pad] = registration.transforms[
@@ -346,8 +353,9 @@ def fix_breakpoints_single(
     pcl_metadata = toml.load(pcl_metadata)
 
     # now we need to determine points where we switched references and correct...
-    pcl_coord_idx = pcl_f["frame_index"][()]
-    pcl_frame_idx = np.unique(pcl_coord_idx)
+    # pcl_coord_idx = pcl_f["frame_index"][()]
+    # pcl_frame_idx = np.unique(pcl_coord_idx)
+    pcl_frame_idx = pcl_f["reference_frame_index"][()]
     npcls = len(pcl_frame_idx)
 
     target = pcl_f["reference_node"][0].decode()
@@ -544,11 +552,13 @@ def fix_breakpoints_combined(
     pcl_file: str,
     transform_aggregate: bool = True,
     enforce_symmetry: bool = True,
+    min_npoints: int = 1000,
 ):
     pcl_f = h5py.File(pcl_file, "r+")
     # now we need to determine points where we switched references and correct...
     pcl_coord_idx = pcl_f["frame_index"][()]
-    pcl_frame_idx = np.unique(pcl_coord_idx)
+    # pcl_frame_idx = np.unique(pcl_coord_idx)
+    pcl_frame_idx = pcl_f["reference_frame_index"][()]
     npcls = len(pcl_frame_idx)
 
     target = pcl_f["reference_node"][0].decode()
@@ -594,6 +604,10 @@ def fix_breakpoints_combined(
             )
             source_read_idx = np.flatnonzero(pcl_coord_idx == _idx)
 
+            if (len(source_read_idx) == 0) or (len(target_read_idx) == 0):
+                warnings.warn(f"Unable to compute transform between {source} and {target} at {_idx}")
+                continue
+
             #TODO: remove
             print(target_read_idx)
             print(source_read_idx)
@@ -607,6 +621,10 @@ def fix_breakpoints_combined(
             target_xyz = pcl_f["xyz"][slice(target_read_idx[0], target_read_idx[-1])]
             target_xyz = target_xyz[~np.isnan(target_xyz).any(axis=1)]  # remove nans
             target_xyz = trim_outliers(target_xyz)
+
+            if (source_xyz.shape[0] < min_npoints) or (target_xyz.shape[0] < min_npoints):
+                warnings.warn(f"Unable to compute transform between {source} and {target} at {_idx}")
+                continue
 
             # be careful since nans will propagate...
             diffs.append(np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0))
