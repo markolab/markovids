@@ -565,7 +565,7 @@ def fix_breakpoints_combined(
     transforms = defaultdict(list)
     for i in tqdm(range(len(pcl_f["reference_node"])), desc="Finding breakpoints..."):
         source = pcl_f["reference_node"][i].decode()
-        if source != target:
+        if (source != target) and (len(source) > 0):
             try:
                 transforms[(target, source)].append(pcl_frame_idx[i])
             except IndexError:
