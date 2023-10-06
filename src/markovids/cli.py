@@ -139,7 +139,7 @@ def cli_registration(
             registration_kwargs=registration_kwargs,
             segmentation_dir=segmentation_dir,
             tail_filter_pixels=registration_tail_filter_pixels,
-            test_run_batches = test_run_batches
+            test_run_batches=test_run_batches,
             valid_height_range=valid_height_range,
         )
     else:
