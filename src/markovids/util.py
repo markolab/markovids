@@ -614,6 +614,8 @@ def fix_breakpoints_combined(
                 continue
 
             #TODO: remove
+            print(target)
+            print(source)
             print(target_read_idx)
             print(source_read_idx)
             print(next_frame)
@@ -633,6 +635,8 @@ def fix_breakpoints_combined(
 
             # be careful since nans will propagate...
             diffs.append(np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0))
+
+            # TODO: removes
             print(diffs[-1])
             # inclusive left hand range
             # exclusive right hand (cuts into next transition)
