@@ -599,9 +599,14 @@ def fix_breakpoints_combined(
             except:
                 next_frame = max(pcl_frame_idx)
 
-            target_read_idx = np.flatnonzero(
-                pcl_coord_idx == np.max(pcl_frame_idx[pcl_frame_idx < _idx])
-            )
+            try:
+                target_read_idx = np.flatnonzero(
+                    pcl_coord_idx == np.max(pcl_frame_idx[pcl_frame_idx < _idx])
+                )
+            except ValueError as e:
+                warnings.warn(f"Unable to compute transform between {source} and {target} at {_idx}")
+                continue
+
             source_read_idx = np.flatnonzero(pcl_coord_idx == _idx)
 
             if (len(source_read_idx) == 0) or (len(target_read_idx) == 0):
