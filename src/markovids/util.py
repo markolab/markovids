@@ -247,6 +247,7 @@ def convert_depth_to_pcl_and_register(
                     post_z_shift=floor_distances[_cam] / z_scale if pcl_floor_delta else None,
                     **pcl_kwargs,
                 )
+                use_pcl = use_pcl.remove_non_finite_points()
                 pcls[_cam].append(use_pcl)
 
         # registration
@@ -271,7 +272,7 @@ def convert_depth_to_pcl_and_register(
 
         # TODO: remove
         print(len(pcls_combined))
-
+        print(len(registration.reference_node))
         # farthest point downsample???
         for i, _pcl in enumerate(pcls_combined):
             pcls_combined[i] = _pcl.remove_non_finite_points().voxel_down_sample(voxel_down_sample)
@@ -280,6 +281,10 @@ def convert_depth_to_pcl_and_register(
         registration.reference_node = registration.reference_node[
             left_pad_size : right_edge_no_pad - left_edge
         ]
+
+        # TODO: remove
+        print(len(pcls_combined))
+        print(len(registration.reference_node))
 
         _tmp = [np.asarray(pcl.points) for pcl in pcls_combined]
         xyz = np.concatenate(_tmp)
