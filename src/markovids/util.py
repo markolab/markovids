@@ -291,7 +291,7 @@ def convert_depth_to_pcl_and_register(
         _tmp = [np.asarray(pcl.points) for pcl in pcls_combined]
         xyz = np.concatenate(_tmp)
 
-        print(_tmp)
+        # TODO: remove
         print(xyz.shape)
 
         npoints = xyz.shape[0]
@@ -353,7 +353,7 @@ def fix_breakpoints_single(
     pcl_metadata = toml.load(pcl_metadata)
 
     # now we need to determine points where we switched references and correct...
-    # pcl_coord_idx = pcl_f["frame_index"][()]
+    pcl_coord_idx = pcl_f["frame_index"][()]
     # pcl_frame_idx = np.unique(pcl_coord_idx)
     pcl_frame_idx = pcl_f["reference_frame_index"][()]
     npcls = len(pcl_frame_idx)
@@ -569,6 +569,7 @@ def fix_breakpoints_combined(
             try:
                 transforms[(target, source)].append(pcl_frame_idx[i])
             except IndexError:
+                warnings.warn(f"Indexing issue finding breakpoints at index number {i}")
                 break
             # DON'T FORGET TO REMOVE AFTER DEBUGGING
         target = source
@@ -598,6 +599,13 @@ def fix_breakpoints_combined(
                 next_frame = np.min(all_bpoints[all_bpoints > _idx])
             except:
                 next_frame = max(pcl_frame_idx)
+
+            # inclusive left hand range
+            # exclusive right hand (cuts into next transition)
+            matches = pcl_frame_idx[
+                np.logical_and(pcl_frame_idx >= _idx, pcl_frame_idx < next_frame)
+            ]
+            frame_group.append(matches)
 
             try:
                 target_read_idx = np.flatnonzero(
@@ -638,13 +646,7 @@ def fix_breakpoints_combined(
 
             # TODO: removes
             print(diffs[-1])
-            # inclusive left hand range
-            # exclusive right hand (cuts into next transition)
-            matches = pcl_frame_idx[
-                np.logical_and(pcl_frame_idx >= _idx, pcl_frame_idx < next_frame)
-            ]
-            frame_group.append(matches)
-
+            
         # alternatively we can get a different transform for each one
         # except we aggressively trim outliers
         diffs = np.array(diffs)
