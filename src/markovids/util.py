@@ -281,16 +281,8 @@ def convert_depth_to_pcl_and_register(
                 f"Did not understand registration algorithm {registration_algorithm}"
             )
 
-        # TODO: remove
-        print(len(pcls[cameras[0]]))
-        print(len(pcls[cameras[1]]))
-        print(len(pcls[cameras[2]]))
-
         pcls_combined = registration.combine_pcls(pcls, progress_bar=False)
 
-        # TODO: remove
-        print(len(pcls_combined))
-        print(len(registration.reference_node))
         # farthest point downsample???
         for i, _pcl in enumerate(pcls_combined):
             pcls_combined[i] = _pcl.remove_non_finite_points().voxel_down_sample(
@@ -302,15 +294,8 @@ def convert_depth_to_pcl_and_register(
             left_pad_size : right_edge_no_pad - left_edge
         ]
 
-        # TODO: remove
-        print(len(pcls_combined))
-        print(len(registration.reference_node))
-
         _tmp = [np.asarray(pcl.points) for pcl in pcls_combined]
         xyz = np.concatenate(_tmp)
-
-        # TODO: remove
-        print(xyz.shape)
 
         npoints = xyz.shape[0]
         frame_index = cur_ts.index[
@@ -668,13 +653,6 @@ def fix_breakpoints_combined(
                 )
                 continue
 
-            # TODO: remove
-            print(target)
-            print(source)
-            print(target_read_idx)
-            print(source_read_idx)
-            print(next_frame)
-
             # use neighboring frames to we don't mess up???
             source_xyz = pcl_f["xyz"][slice(source_read_idx[0], source_read_idx[-1])]
             source_xyz = source_xyz[~np.isnan(source_xyz).any(axis=1)]  # remove nans
@@ -696,9 +674,6 @@ def fix_breakpoints_combined(
             diffs.append(
                 np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0)
             )
-
-            # TODO: removes
-            print(diffs[-1])
 
         diffs = np.array(diffs)
         # pack into homogeneous coordinates
@@ -746,7 +721,7 @@ def fix_breakpoints_combined(
                     _["transform"] for _ in transform_list if _["pair"] == _pair
                 ][0]
                 uniq_transform[_pair] = transform
-            except Exception:
+            except IndexError:
                 pass
         
         # TODO: add indirect paths here... 

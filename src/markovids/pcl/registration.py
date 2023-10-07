@@ -200,7 +200,9 @@ class DepthVideoPairwiseRegister:
                 reference_debounce_count = 0
             previous_reference_node_proposal = reference_node_proposal
 
-            if reference_debounce_count > self.reference_debounce:
+            # TODO: change to geq? alternatively set baseline to 1, this also may be superfluous with the
+            # smoothing we're using...
+            if reference_debounce_count >= self.reference_debounce:
                 reference_node = reference_node_proposal
                 reference_debounce_count = 0
 
