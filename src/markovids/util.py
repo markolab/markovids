@@ -8,7 +8,7 @@ from markovids.vid.io import (
 )
 from markovids.depth.plane import get_floor
 from markovids.depth.io import load_segmentation_masks
-from markovids.depth.track import clean_roi
+from markovids.depth.track import clean_roi, get_largest_contour
 from markovids.depth.moments import im_moment_features
 from markovids.pcl.io import (
     pcl_from_depth,
@@ -776,6 +776,8 @@ def reproject_pcl_to_depth(
     project_xy: bool = True,
     smooth_kernel: Tuple[float, float, float] = (1.0, 0.75, 0.75),
     stitch_buffer: int = 10,
+    use_largest_contour: bool = True,
+    valid_height: Tuple[float, float] = (10, 800),
     visualize_results: bool = True,
     z_clip: float = 0,
 ):
@@ -936,10 +938,14 @@ def reproject_pcl_to_depth(
         left_edge = max(batch - batch_overlap, 0)
         left_noverlap = batch - left_edge
         right_edge = min(batch + batch_size, len(pcl_frame_index))
-        # TODO: mask one last time for cleaning (get largest contour e.g.)f
         smooth_frames = ndimage.gaussian_filter(
             depth_f["frames"][left_edge:right_edge], smooth_kernel
         )
+        if use_largest_contour:
+            for i, _frame in enumerate(smooth_frames):
+                mask = cv2.inRange(_frame, *valid_height)
+                mask = get_largest_contour(mask)
+                smooth_frames[i] = _frame * mask.astype(_frame.dtype)
         depth_f["frames"][batch:right_edge] = smooth_frames[left_noverlap:]
 
         if writer is not None:
