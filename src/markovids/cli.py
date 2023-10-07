@@ -28,8 +28,8 @@ def cli():
 @click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
 @click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
 @click.option("--registration-algorithm", type=click.Choice(["pairwise", "multiway"]), default="pairwise", show_envvar=True)
-@click.option("--registration-cleanup-nbs-combined", type=int, default=100, show_envvar=True) # previously 21
-@click.option("--registration-cleanup-nbs", type=int, default=100, show_envvar=True) # previously 7
+@click.option("--registration-cleanup-nbs-combined", type=int, default=200, show_envvar=True) # previously 21
+@click.option("--registration-cleanup-nbs", type=int, default=200, show_envvar=True) # previously 7
 @click.option("--registration-cleanup-radius-combined", type=float, default=3.0, show_envvar=True)
 @click.option("--registration-cleanup-radius", type=float, default=3.0, show_envvar=True)
 @click.option("--registration-cleanup-sigma", type=float, default=1.5, show_envvar=True)
