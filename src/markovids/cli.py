@@ -28,12 +28,12 @@ def cli():
 @click.option("--floor-range", type=(float, float), default=(1300, 1600), show_envvar=True)
 @click.option("--intrinsics-file",type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
 @click.option("--registration-algorithm", type=click.Choice(["pairwise", "multiway"]), default="pairwise", show_envvar=True)
-@click.option("--registration-cleanup-nbs-combined", type=int, default=25, show_envvar=True)
-@click.option("--registration-cleanup-nbs", type=int, default=7, show_envvar=True)
+@click.option("--registration-cleanup-nbs-combined", type=int, default=100, show_envvar=True) # previously 21
+@click.option("--registration-cleanup-nbs", type=int, default=100, show_envvar=True) # previously 7
 @click.option("--registration-cleanup-radius-combined", type=float, default=3.0, show_envvar=True)
 @click.option("--registration-cleanup-radius", type=float, default=3.0, show_envvar=True)
-@click.option("--registration-cleanup-sigma", type=float, default=2.0, show_envvar=True)
-@click.option("--registration-cleanup-sigma-combined", type=float, default=2.0, show_envvar=True)
+@click.option("--registration-cleanup-sigma", type=float, default=1.5, show_envvar=True)
+@click.option("--registration-cleanup-sigma-combined", type=float, default=1.5, show_envvar=True)
 @click.option("--registration-dir", type=str, default="_registration", help="Directory for output", show_envvar=True)
 @click.option("--registration-fitness-threshold", type=float, default=.25, show_envvar=True)
 @click.option("--registration-max-correspondence-distance", type=float, default=1.0, show_envvar=True)
@@ -49,7 +49,7 @@ def cli():
 @click.option("--reproject-stitch-buffer", type=int, default=25, show_envvar=True)
 @click.option("--segmentation-dir", type=str, default="_segmentation_tau-5", show_envvar=True)
 @click.option("--test-run-batches", type=int, default=-1, show_envvar=True)
-@click.option("--valid-height-range", type=(float, float), default=(10, 800), show_envvar=True)
+@click.option("--valid-height-range", type=(float, float), default=(20, 800), show_envvar=True) # previously (10, 800)
 # fmt: on
 def cli_registration(
     data_dir,

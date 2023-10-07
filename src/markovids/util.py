@@ -832,14 +832,16 @@ def reproject_pcl_to_depth(
         max_pts = np.maximum(max_pts, new_pts_max)
         min_pts = np.minimum(min_pts, new_pts_min)
 
-    buffer = np.floor(np.minimum(min_pts[:2], np.array([0, 0]))).astype("int") * -1
+    # note here that we double the buffer since points get shifted buffer / 2
+    buffer = np.floor(np.minimum(min_pts[:2], np.array([0, 0]))).astype("int") * -2
     buffer += stitch_buffer
     stitch_size = (
         next_even_number(max_pts[0] + buffer[0]),
         next_even_number(max_pts[1] + buffer[1]),
     )
 
-    print(f"Stitch size {stitch_size}")
+    print(f"Buffer size: {buffer}")
+    print(f"Stitch size: {stitch_size}")
 
     depth_f = h5py.File(registration_file, "w")
     depth_f.create_dataset(

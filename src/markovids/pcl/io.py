@@ -281,11 +281,11 @@ def depth_from_pcl_interpolate(
     # z *= z_scale
 
     if np.isscalar(buffer):
-        u += buffer
-        v += buffer
+        u += buffer / 2
+        v += buffer / 2
     elif len(buffer) == 2:
-        u += buffer[0]
-        v += buffer[1]
+        u += buffer[0] / 2
+        v += buffer[1] / 2
 
     u = np.clip(u, 1, width - 2)
     v = np.clip(v, 1, height - 2)
