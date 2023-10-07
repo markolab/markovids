@@ -19,8 +19,6 @@ from markovids.pcl.io import (
 )
 from markovids.pcl.registration import (
     DepthVideoPairwiseRegister,
-    correct_breakpoints,
-    correct_breakpoints_extrapolate,
 )
 from collections import defaultdict
 from tqdm.auto import tqdm
@@ -594,10 +592,8 @@ def fix_breakpoints_combined(
             except IndexError:
                 warnings.warn(f"Indexing issue finding breakpoints at index number {i}")
                 break
-            # DON'T FORGET TO REMOVE AFTER DEBUGGING
         target = source
 
-    print(transforms)
     all_bpoints = np.concatenate(list(transforms.values()))
     all_bpoints = all_bpoints[all_bpoints.argsort()]
 
@@ -940,6 +936,7 @@ def reproject_pcl_to_depth(
         left_edge = max(batch - batch_overlap, 0)
         left_noverlap = batch - left_edge
         right_edge = min(batch + batch_size, len(pcl_frame_index))
+        # TODO: mask one last time for cleaning (get largest contour e.g.)f
         smooth_frames = ndimage.gaussian_filter(
             depth_f["frames"][left_edge:right_edge], smooth_kernel
         )

@@ -1,11 +1,9 @@
 import open3d as o3d
 import numpy as np
-import copy
 import pandas as pd
 import warnings
 from tqdm.auto import tqdm
 from typing import Union, Optional
-from scipy import signal
 
 
 default_criteria = o3d.pipelines.registration.ICPConvergenceCriteria(
@@ -330,7 +328,7 @@ class DepthVideoPairwiseRegister:
                 reference_debounce_count = 0
             previous_reference_node_proposal = reference_node_proposal
 
-            if reference_debounce_count > self.reference_debounce:
+            if reference_debounce_count >= self.reference_debounce:
                 reference_node = reference_node_proposal
                 reference_debounce_count = 0
 
@@ -600,133 +598,3 @@ def optimize_pose_graph(
             default_opt,
             option,
         )
-
-
-def correct_breakpoints(
-    combined_pcl,
-    reference_nodes,
-    z_shift=False,
-    # criteria=default_criteria,
-    # estimation=default_estimation,
-    # max_correspondence_distance=1.0,
-):
-    breakpoints = []
-    transforms = []
-
-    # CHECK IDX
-    for i, (_ref1, _ref2) in enumerate(zip(reference_nodes[:-1], reference_nodes[1:])):
-        if _ref1 != _ref2:
-            breakpoints.append(i + 1)
-
-    frame_groups = []
-    for _bpoint in breakpoints:
-        cur_node = reference_nodes[_bpoint]
-        next_break = len(reference_nodes[_bpoint:])
-        for i, _ref_node in enumerate(reference_nodes[_bpoint:]):
-            if _ref_node != cur_node:
-                next_break = i
-                break
-
-        # extrapolate new positions
-        # for now linear is probably fine...
-        _tmp_transforms = []
-        for j in range(0, 1):
-            for k in range(1, 2):
-                use_pcl = combined_pcl[_bpoint + j]
-                target_pcl = combined_pcl[_bpoint - k]
-
-                init_transformation = np.eye(4)
-                c0 = np.array(np.median(target_pcl.points, axis=0))
-                c1 = np.array(np.median(use_pcl.points, axis=0))
-                df = c0 - c1
-                if not z_shift:
-                    df[2] = 0  # null out z shift if we don't want it...
-                init_transformation[:3, 3] = df
-
-                # potentially downweight any z-shifts, those should be 0...
-                _tmp_transforms.append(init_transformation)
-
-                # do some time filtering, check n+1, n+2, n+3 relative to n and n-1 after breakpoint...
-                # dct = pcl.registration.pairwise_registration(
-                #     use_pcl,
-                #     target_pcl,
-                #     init_transformation=init_transformation,
-                #     compute_information=False,
-                #     max_correspondence_distance=max_correspondence_distance,
-                #     criteria=criteria,
-                #     estimation=estimation,
-                # )
-                # _tmp_fitnesses.append(dct["fitness"])
-                # _tmp_transforms.append(dct["transformation"])
-
-        use_transform = np.median(_tmp_transforms, axis=0)
-        _frame_group = range(_bpoint, _bpoint + next_break)
-        frame_groups.append(_frame_group)
-        transforms.append(use_transform)
-        for _frame in _frame_group:
-            combined_pcl[_frame] = combined_pcl[_frame].transform(use_transform)
-
-    return breakpoints, frame_groups, transforms
-
-
-def correct_breakpoints_extrapolate(
-    combined_pcl,
-    reference_nodes,
-    extrapolate_history=5,
-    poly_deg=1,
-    z_shift=False,
-):
-    breakpoints = []
-    transforms = []
-
-    # CHECK IDX
-    for i, (_ref1, _ref2) in enumerate(zip(reference_nodes[:-1], reference_nodes[1:])):
-        if _ref1 != _ref2:
-            breakpoints.append(i + 1)
-
-    frame_groups = []
-    for _bpoint in breakpoints:
-        cur_node = reference_nodes[_bpoint]
-        next_break = len(reference_nodes[_bpoint:])
-        for i, _ref_node in enumerate(reference_nodes[_bpoint:]):
-            if _ref_node != cur_node:
-                next_break = i
-                break
-
-        # extrapolate new positions
-        # for now linear is probably fine...
-        use_pcl = combined_pcl[_bpoint]
-        centroids = []
-        for j in range(extrapolate_history, 0, -1):
-            target_pcl = combined_pcl[_bpoint - j]
-            centroids.append(np.array(np.median(target_pcl.points, axis=0)))
-
-        centroid_array = np.array(centroids)  # should be t x 3 (x, y, z)
-        idx_array = np.arange(extrapolate_history)
-        # interpolate target position
-        # new_point = idx_array[-1] + 1
-        # c0 = np.zeros((3,), dtype="float")
-        # for _axis in range(centroid_array.shape[1]):
-        # p = np.polynomial.Polynomial.fit(idx_array, centroid_array[:,_axis], poly_deg)
-        # c0[_axis] = p(new_point)
-
-        # take median vel and use to project next point...
-        df = np.median(np.diff(centroid_array, axis=0), axis=0)
-        c0 = centroid_array[-1] + df
-
-        # c0 is new target built through extrapolation, find diff with c1, position of current pcl
-        use_transform = np.eye(4)
-        c1 = np.array(np.median(use_pcl.points, axis=0))
-        df = c0 - c1
-        if not z_shift:
-            df[2] = 0
-        use_transform[:3, 3] = df
-
-        # potentially downweight any z-shifts, those should be 0...
-        _frame_group = range(_bpoint, _bpoint + next_break)
-        frame_groups.append(_frame_group)
-        transforms.append(use_transform)
-        for _frame in _frame_group:
-            combined_pcl[_frame] = combined_pcl[_frame].transform(use_transform)
-
-    return breakpoints, frame_groups, transforms
