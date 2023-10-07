@@ -60,7 +60,10 @@ def convert_depth_to_pcl_and_register(
     batch_overlap: int = 150,
     batch_size: int = 2000,
     burn_frames: int = 500,
-    depth_frame_bilateral_filter: Tuple[float, float] = (3., 3.), # unclear if we want this yet, slow...
+    depth_frame_bilateral_filter: Tuple[float, float] = (
+        3.0,
+        3.0,
+    ),  # unclear if we want this yet, slow...
     floor_range: Tuple[float, float] = (1300.0, 1600.0),
     pcl_kwargs: dict = {},
     pcl_floor_delta: bool = True,
@@ -68,7 +71,9 @@ def convert_depth_to_pcl_and_register(
     registration_dir: str = "_registration",
     registration_kwargs: dict = {},
     segmentation_dir: str = "_segmentation_tau-5",
-    tail_filter_pixels: Optional[int] = 21,  # scale of morphological opening filter to remove tail (None to skip)
+    tail_filter_pixels: Optional[
+        int
+    ] = 21,  # scale of morphological opening filter to remove tail (None to skip)
     test_run_batches: int = -1,
     timestamp_merge_tolerance=0.003,  # in seconds
     valid_height_range: Tuple[float, float] = (10.0, 800.0),
@@ -93,7 +98,6 @@ def convert_depth_to_pcl_and_register(
         }
     else:
         clean_roi_kwargs = None
-
 
     os.makedirs(registration_dir, exist_ok=True)
 
@@ -136,17 +140,22 @@ def convert_depth_to_pcl_and_register(
         )
     }
     rois = {
-        _cam: get_floor(bgrounds[_cam], floor_range=floor_range, dilations=10) for _cam in cameras
+        _cam: get_floor(bgrounds[_cam], floor_range=floor_range, dilations=10)
+        for _cam in cameras
     }
 
     floor_distances = {}
     for _cam in tqdm(cameras, desc="Getting floor distances"):
         roi_floor = cv2.erode(
-            rois[_cam], cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)), iterations=5
+            rois[_cam],
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+            iterations=5,
         )
         floor_distances[_cam] = np.nanmedian(bgrounds[_cam][roi_floor > 0].ravel())
 
-    _, merged_ts = read_timestamps_multicam(ts_paths, merge_tolerance=timestamp_merge_tolerance)
+    _, merged_ts = read_timestamps_multicam(
+        ts_paths, merge_tolerance=timestamp_merge_tolerance
+    )
     use_ts = merged_ts.dropna().iloc[burn_frames:]
     nframes = len(use_ts)
 
@@ -183,7 +192,9 @@ def convert_depth_to_pcl_and_register(
         compression="lzf",
     )
     pcl_f.create_dataset("reference_node", (len(use_ts),), str_dt, compression="lzf")
-    pcl_f.create_dataset("reference_frame_index", (len(use_ts),), "uint32", compression="lzf")
+    pcl_f.create_dataset(
+        "reference_frame_index", (len(use_ts),), "uint32", compression="lzf"
+    )
 
     for k, v in registration_kwargs.items():
         if v is not None:
@@ -235,18 +246,23 @@ def convert_depth_to_pcl_and_register(
                 # bilateral filter depth frames??
                 use_dat = raw_dat[_cam][_frame].copy().astype("float32")
                 if depth_frame_bilateral_filter is not None:
-                    use_dat = cv2.bilateralFilter(use_dat, -1, *depth_frame_bilateral_filter)
+                    use_dat = cv2.bilateralFilter(
+                        use_dat, -1, *depth_frame_bilateral_filter
+                    )
                 use_roi = roi_dats[_cam][_frame]
                 bground_rem_dat = floor_distances[_cam] - use_dat
                 invalid_mask = np.logical_or(
-                    bground_rem_dat < valid_height_range[0], bground_rem_dat > valid_height_range[1]
+                    bground_rem_dat < valid_height_range[0],
+                    bground_rem_dat > valid_height_range[1],
                 )
                 invalid_mask = np.logical_or(invalid_mask, use_roi == 0)
                 use_dat[invalid_mask] = np.nan
                 use_pcl = pcl_from_depth(
                     use_dat,
                     intrinsics_matrix[_cam],
-                    post_z_shift=floor_distances[_cam] / z_scale if pcl_floor_delta else None,
+                    post_z_shift=floor_distances[_cam] / z_scale
+                    if pcl_floor_delta
+                    else None,
                     **pcl_kwargs,
                 )
                 use_pcl = use_pcl.remove_non_finite_points()
@@ -269,7 +285,7 @@ def convert_depth_to_pcl_and_register(
         print(len(pcls[cameras[0]]))
         print(len(pcls[cameras[1]]))
         print(len(pcls[cameras[2]]))
-         
+
         pcls_combined = registration.combine_pcls(pcls, progress_bar=False)
 
         # TODO: remove
@@ -277,7 +293,9 @@ def convert_depth_to_pcl_and_register(
         print(len(registration.reference_node))
         # farthest point downsample???
         for i, _pcl in enumerate(pcls_combined):
-            pcls_combined[i] = _pcl.remove_non_finite_points().voxel_down_sample(voxel_down_sample)
+            pcls_combined[i] = _pcl.remove_non_finite_points().voxel_down_sample(
+                voxel_down_sample
+            )
 
         pcls_combined = pcls_combined[left_pad_size : right_edge_no_pad - left_edge]
         registration.reference_node = registration.reference_node[
@@ -319,9 +337,11 @@ def convert_depth_to_pcl_and_register(
         pcl_f["reference_frame_index"][batch:right_edge_no_pad] = frame_index
         pcl_f["reference_node"][batch:right_edge_no_pad] = registration.reference_node
         for _cam in cameras:
-            pcl_f[f"transformations/{_cam}"][batch:right_edge_no_pad] = registration.transforms[
-                _cam
-            ][left_pad_size : right_edge_no_pad - left_edge]
+            pcl_f[f"transformations/{_cam}"][
+                batch:right_edge_no_pad
+            ] = registration.transforms[_cam][
+                left_pad_size : right_edge_no_pad - left_edge
+            ]
 
         pcl_count += npoints
         del pcls_combined
@@ -372,7 +392,8 @@ def fix_breakpoints_single(
     all_bpoints = all_bpoints[all_bpoints.argsort()]
 
     _, merged_ts = read_timestamps_multicam(
-        pcl_metadata["ts_paths"], merge_tolerance=pcl_metadata["timestamp_merge_tolerance"]
+        pcl_metadata["ts_paths"],
+        merge_tolerance=pcl_metadata["timestamp_merge_tolerance"],
     )
     use_ts = merged_ts.dropna().iloc[pcl_metadata["burn_frames"] :]
 
@@ -396,7 +417,9 @@ def fix_breakpoints_single(
     pcl_f.create_dataset("bpoints", data=all_bpoints, compression="lzf")
 
     transform_list = []
-    for (target, source), pcl_idxs in tqdm(transforms.items(), desc="Estimating transforms"):
+    for (target, source), pcl_idxs in tqdm(
+        transforms.items(), desc="Estimating transforms"
+    ):
         # load in CURRENT FRAME AT THE CAMERA TRANSITION POINT
         # source is where we ended up, target is where we want to go...
         diffs = []
@@ -411,7 +434,9 @@ def fix_breakpoints_single(
             dct = use_ts.loc[_idx][pcl_metadata["cameras"]].astype("int").to_dict()
             # dct = {k: [v] for k, v in dct.items()}
             masks = {
-                _cam: load_segmentation_masks(_path, dct[_cam], pcl_metadata["segmentation_dir"])
+                _cam: load_segmentation_masks(
+                    _path, dct[_cam], pcl_metadata["segmentation_dir"]
+                )
                 for _cam, _path in pcl_metadata["dat_paths"].items()
             }
             frames = read_frames_multicam(load_paths, dct, load_dct, progress_bar=False)
@@ -454,7 +479,9 @@ def fix_breakpoints_single(
             source_xyz = trim_outliers(np.asarray(source_pcl.points))
             target_xyz = trim_outliers(np.asarray(target_pcl.points))
 
-            diffs.append(np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0))
+            diffs.append(
+                np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0)
+            )
             # inclusive left hand range
             # exclusive right hand (cuts into next transition)
             matches = pcl_frame_idx[
@@ -496,7 +523,8 @@ def fix_breakpoints_single(
                 )
 
     joblib.dump(
-        transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list_pre.p")
+        transform_list,
+        os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list_pre.p"),
     )
 
     # enforce symmetry???
@@ -507,7 +535,9 @@ def fix_breakpoints_single(
 
         for _pair in uniq_pairs:
             try:
-                transform = [_["transform"] for _ in transform_list if _["pair"] == _pair][0]
+                transform = [
+                    _["transform"] for _ in transform_list if _["pair"] == _pair
+                ][0]
                 uniq_transform[_pair] = transform
             except Exception:
                 pass
@@ -528,7 +558,10 @@ def fix_breakpoints_single(
         for i in range(len(transform_list)):
             transform_list[i]["transform"] = new_transform[transform_list[i]["pair"]]
 
-    joblib.dump(transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list.p"))
+    joblib.dump(
+        transform_list,
+        os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list.p"),
+    )
     idxsort = np.array([_["start"] for _ in transform_list]).argsort()
     sorted_transform_list = [transform_list[i] for i in idxsort]
     odometry = np.eye(4)
@@ -537,7 +570,9 @@ def fix_breakpoints_single(
         odometry = odometry @ sorted_transform_list[i]["transform"]
         # align everything
         read_pcls = sorted_transform_list[i]["pcl_idxs"]
-        mask_array = (pcl_coord_idx >= min(read_pcls)) & (pcl_coord_idx <= max(read_pcls))
+        mask_array = (pcl_coord_idx >= min(read_pcls)) & (
+            pcl_coord_idx <= max(read_pcls)
+        )
         adj = np.min(np.flatnonzero(mask_array))
         use_coord_index = pcl_coord_idx[mask_array]
         for _pcl_idx in read_pcls:
@@ -545,7 +580,9 @@ def fix_breakpoints_single(
             xyz = pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)]
             _pcl = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
             _pcl = _pcl.transform(odometry)
-            pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)] = np.asarray(_pcl.points)
+            pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)] = np.asarray(
+                _pcl.points
+            )
 
 
 def fix_breakpoints_combined(
@@ -574,7 +611,6 @@ def fix_breakpoints_combined(
             # DON'T FORGET TO REMOVE AFTER DEBUGGING
         target = source
 
-
     print(transforms)
     all_bpoints = np.concatenate(list(transforms.values()))
     all_bpoints = all_bpoints[all_bpoints.argsort()]
@@ -586,8 +622,12 @@ def fix_breakpoints_combined(
         del pcl_f["bpoints"]
         pcl_f.create_dataset("bpoints", data=all_bpoints, compression="lzf")
 
+    # TODO: enable walking paths between cameras if we don't have a direct path
+    # e.g. a-->b-->c, most useful for short videos...
     transform_list = []
-    for (target, source), pcl_idxs in tqdm(transforms.items(), desc="Getting transforms"):
+    for (target, source), pcl_idxs in tqdm(
+        transforms.items(), desc="Getting transforms"
+    ):
         diffs = []
         frame_group = []
 
@@ -612,16 +652,20 @@ def fix_breakpoints_combined(
                     pcl_coord_idx == np.max(pcl_frame_idx[pcl_frame_idx < _idx])
                 )
             except ValueError as e:
-                warnings.warn(f"Unable to compute transform between {source} and {target} at {_idx}")
+                warnings.warn(
+                    f"Unable to compute transform between {source} and {target} at {_idx}"
+                )
                 continue
 
             source_read_idx = np.flatnonzero(pcl_coord_idx == _idx)
 
             if (len(source_read_idx) == 0) or (len(target_read_idx) == 0):
-                warnings.warn(f"Unable to compute transform between {source} and {target} at {_idx}")
+                warnings.warn(
+                    f"Unable to compute transform between {source} and {target} at {_idx}"
+                )
                 continue
 
-            #TODO: remove
+            # TODO: remove
             print(target)
             print(source)
             print(target_read_idx)
@@ -637,19 +681,24 @@ def fix_breakpoints_combined(
             target_xyz = target_xyz[~np.isnan(target_xyz).any(axis=1)]  # remove nans
             target_xyz = trim_outliers(target_xyz)
 
-            if (source_xyz.shape[0] < min_npoints) or (target_xyz.shape[0] < min_npoints):
-                warnings.warn(f"Unable to compute transform between {source} and {target} at {_idx}")
+            if (source_xyz.shape[0] < min_npoints) or (
+                target_xyz.shape[0] < min_npoints
+            ):
+                warnings.warn(
+                    f"Unable to compute transform between {source} and {target} at {_idx}"
+                )
                 continue
 
             # be careful since nans will propagate...
-            diffs.append(np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0))
+            diffs.append(
+                np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0)
+            )
 
             # TODO: removes
             print(diffs[-1])
-            
-        # alternatively we can get a different transform for each one
-        # except we aggressively trim outliers
+
         diffs = np.array(diffs)
+        # pack into homogeneous coordinates
         if transform_aggregate:
             use_transform = np.eye(4)
             use_transform[:3, 3] = np.nanmedian(diffs, axis=0)
@@ -680,7 +729,8 @@ def fix_breakpoints_combined(
                 )
 
     joblib.dump(
-        transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list_pre.p")
+        transform_list,
+        os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list_pre.p"),
     )
     if transform_aggregate and enforce_symmetry:
         print("Enforcing symmetry in breakpoint fixes...")
@@ -689,27 +739,31 @@ def fix_breakpoints_combined(
 
         for _pair in uniq_pairs:
             try:
-                transform = [_["transform"] for _ in transform_list if _["pair"] == _pair][0]
+                transform = [
+                    _["transform"] for _ in transform_list if _["pair"] == _pair
+                ][0]
                 uniq_transform[_pair] = transform
             except Exception:
                 pass
-
+        
+        # TODO: add indirect paths here... 
         new_transform = {}
         for (target, source), v in uniq_transform.items():
             try:
-                # ONLY REFLECT THE TRANSLATION COMPONENT!!!!!
-                reflection = uniq_transform[(source, target)].copy()
-                reflection[:3, 3] *= -1
-                new_transform[(target, source)] = (
-                    uniq_transform[(target, source)] + reflection
-                ) / 2.0
+                reflection = np.linalg.inv(uniq_transform[(source, target)])
+                new_transform[(target, source)] = np.nanmean(
+                    np.stack([uniq_transform[(target, source)], reflection]), axis=0
+                )
             except KeyError:
                 new_transform[(target, source)] = uniq_transform[(target, source)]
 
         for i in range(len(transform_list)):
             transform_list[i]["transform"] = new_transform[transform_list[i]["pair"]]
 
-    joblib.dump(transform_list, os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list.p"))
+    joblib.dump(
+        transform_list,
+        os.path.join(os.path.dirname(pcl_file), "bpoint_transform_list.p"),
+    )
     idxsort = np.array([_["start"] for _ in transform_list]).argsort()
     sorted_transform_list = [transform_list[i] for i in idxsort]
     odometry = np.eye(4)
@@ -718,7 +772,9 @@ def fix_breakpoints_combined(
         odometry = odometry @ sorted_transform_list[i]["transform"]
         # align everything
         read_pcls = sorted_transform_list[i]["pcl_idxs"]
-        mask_array = (pcl_coord_idx >= min(read_pcls)) & (pcl_coord_idx <= max(read_pcls))
+        mask_array = (pcl_coord_idx >= min(read_pcls)) & (
+            pcl_coord_idx <= max(read_pcls)
+        )
         adj = np.min(np.flatnonzero(mask_array))
         use_coord_index = pcl_coord_idx[mask_array]
         for _pcl_idx in read_pcls:
@@ -729,7 +785,9 @@ def fix_breakpoints_combined(
             xyz = pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)]
             _pcl = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
             _pcl = _pcl.transform(odometry)
-            pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)] = np.asarray(_pcl.points)
+            pcl_f["xyz"][slice(pcl_read_idx[0], pcl_read_idx[-1] + 1)] = np.asarray(
+                _pcl.points
+            )
 
 
 def reproject_pcl_to_depth(
@@ -826,11 +884,15 @@ def reproject_pcl_to_depth(
 
         # loop through indices to build a boolean index into pcl store
         read_pcls = pcl_frame_index[left_edge:right_edge]
-        new_im = np.zeros((len(read_pcls), stitch_size[1], stitch_size[0]), dtype="uint16")
+        new_im = np.zeros(
+            (len(read_pcls), stitch_size[1], stitch_size[0]), dtype="uint16"
+        )
         reference_node = pcl_f["reference_node"][left_edge:right_edge]
         reference_node = [_.decode() for _ in reference_node]
 
-        mask_array = (pcl_coord_index >= min(read_pcls)) & (pcl_coord_index <= max(read_pcls))
+        mask_array = (pcl_coord_index >= min(read_pcls)) & (
+            pcl_coord_index <= max(read_pcls)
+        )
         adj = np.min(np.flatnonzero(mask_array))
         use_coord_index = pcl_coord_index[mask_array]
 
@@ -871,7 +933,9 @@ def reproject_pcl_to_depth(
             new_im[i] = _new_im
         # then map the matrix onto the h5 file...
         depth_f["frames"][
-            slice(left_edge, right_edge), slice(0, stitch_size[1]), slice(0, stitch_size[0])
+            slice(left_edge, right_edge),
+            slice(0, stitch_size[1]),
+            slice(0, stitch_size[0]),
         ] = new_im
         # keep track of max projection for cropping
 
@@ -950,7 +1014,8 @@ def compute_scalars(
     head_camera = cameras[0]
 
     ts_paths = {
-        os.path.join(data_dir, f"{_cam}.txt"): _cam for _cam in registration_metadata["cameras"]
+        os.path.join(data_dir, f"{_cam}.txt"): _cam
+        for _cam in registration_metadata["cameras"]
     }
     _, merged_ts = read_timestamps_multicam(
         ts_paths, merge_tolerance=registration_metadata["timestamp_merge_tolerance"]
@@ -993,7 +1058,9 @@ def compute_scalars(
                 tmp = np.array([cv2.contourArea(x) for x in cnts])
                 mouse_contour = cnts[tmp.argmax()]
                 new_mask = np.zeros(mouse_mask.shape, dtype="uint8")
-                new_mask = cv2.drawContours(new_mask, [mouse_contour], -1, color=1, thickness=cv2.FILLED)
+                new_mask = cv2.drawContours(
+                    new_mask, [mouse_contour], -1, color=1, thickness=cv2.FILLED
+                )
                 mouse_mask = new_mask
 
                 v, u = np.where(mouse_mask)
@@ -1013,7 +1080,9 @@ def compute_scalars(
                 orientation[_id] = features["orientation"]
                 axis_length[_id] = features["axis_length"]
 
-    all_data = np.hstack([centroid, centroid_px, sigma, orientation[:, None], axis_length])
+    all_data = np.hstack(
+        [centroid, centroid_px, sigma, orientation[:, None], axis_length]
+    )
     all_columns = [
         "x_mean_mm",
         "y_mean_mm",
@@ -1032,7 +1101,9 @@ def compute_scalars(
     scalar_diff_tau_samples = np.round(scalar_diff_tau * fps).astype("int")
 
     df_scalars = pd.DataFrame(all_data, columns=all_columns, index=frame_ids)
-    df_scalars["orientation_rad"] = np.unwrap(df_scalars["orientation_rad"], period=np.pi) + np.pi
+    df_scalars["orientation_rad"] = (
+        np.unwrap(df_scalars["orientation_rad"], period=np.pi) + np.pi
+    )
     df_scalars["timestamps"] = merged_ts.loc[df_scalars.index, "system_timestamp"]
     df_scalars = df_scalars.rolling(scalar_tau_samples, 1, True).mean()
 
@@ -1044,7 +1115,9 @@ def compute_scalars(
     velocity_3d = np.sqrt(
         (df_scalars_diff[["x_mean_mm", "y_mean_mm", "z_mean_mm"]] ** 2).sum(axis=1)
     )
-    velocity_2d = np.sqrt((df_scalars_diff[["x_mean_mm", "y_mean_mm"]] ** 2).sum(axis=1))
+    velocity_2d = np.sqrt(
+        (df_scalars_diff[["x_mean_mm", "y_mean_mm"]] ** 2).sum(axis=1)
+    )
     velocity_z = df_scalars_diff["z_mean_mm"]
 
     df_scalars["velocity_2d_mm_s"] = velocity_2d
