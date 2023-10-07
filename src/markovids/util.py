@@ -442,6 +442,13 @@ def fix_breakpoints_single(
             frames = read_frames_multicam(load_paths, dct, load_dct, progress_bar=False)
             # with frame, convert to pcls, run it down...
 
+            # inclusive left hand range
+            # exclusive right hand (cuts into next transition)
+            matches = pcl_frame_idx[
+                np.logical_and(pcl_frame_idx >= _idx, pcl_frame_idx < next_frame)
+            ]
+            frame_group.append(matches)
+
             source_floor_distance = float(pcl_metadata["floor_distances"][source])
             source_bground_rem = source_floor_distance - frames[source]
             source_invalid_mask = np.logical_or(
@@ -476,18 +483,15 @@ def fix_breakpoints_single(
                 **pcl_metadata["pcl_kwargs"],
             )
 
+            # TODO: bail here if we don't have a large enough pcl
+
             source_xyz = trim_outliers(np.asarray(source_pcl.points))
             target_xyz = trim_outliers(np.asarray(target_pcl.points))
 
             diffs.append(
                 np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0)
             )
-            # inclusive left hand range
-            # exclusive right hand (cuts into next transition)
-            matches = pcl_frame_idx[
-                np.logical_and(pcl_frame_idx >= _idx, pcl_frame_idx < next_frame)
-            ]
-            frame_group.append(matches)
+            
 
         # alternatively we can get a different transform for each one
         # except we aggressively trim outliers...
@@ -545,13 +549,10 @@ def fix_breakpoints_single(
         new_transform = {}
         for (target, source), v in uniq_transform.items():
             try:
-                # TODO: simply invert...
-                # ONLY REFLECT THE TRANSLATION COMPONENT!!!!!
-                reflection = uniq_transform[(source, target)].copy()
-                reflection[:3, 3] *= -1
-                new_transform[(target, source)] = (
-                    uniq_transform[(target, source)] + reflection
-                ) / 2.0
+                reflection = np.linalg.inv(uniq_transform[(source, target)])
+                new_transform[(target, source)] = np.nanmean(
+                    np.stack([uniq_transform[(target, source)], reflection]), axis=0
+                )
             except KeyError:
                 new_transform[(target, source)] = uniq_transform[(target, source)]
 
@@ -624,6 +625,8 @@ def fix_breakpoints_combined(
 
     # TODO: enable walking paths between cameras if we don't have a direct path
     # e.g. a-->b-->c, most useful for short videos...
+    # G = nx.complete_graph(3)
+    # nx.all_simple_paths(G,0,1)
     transform_list = []
     for (target, source), pcl_idxs in tqdm(
         transforms.items(), desc="Getting transforms"
