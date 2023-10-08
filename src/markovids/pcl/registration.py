@@ -289,6 +289,7 @@ class DepthVideoPairwiseRegister:
         previous_reference_node_proposal = reference_node
 
         reference_debounce_count = 0
+        reference_history = 0
         for _frame in tqdm(
             range(npcls), disable=not progress_bar, desc="Estimating transformations"
         ):
@@ -316,7 +317,7 @@ class DepthVideoPairwiseRegister:
                 (max_diff <= 0)
                 and (npoints[reference_node] >= self.reference_min_npoints)
                 and (npoints_retain[reference_node] >= self.reference_min_fraction)
-            ):
+            ) or (reference_history < self.reference_min_history):
                 reference_node_proposal = reference_node
             else:
                 weights_diff[reference_node] = -np.inf  # exclude ref.
@@ -336,6 +337,9 @@ class DepthVideoPairwiseRegister:
             if reference_debounce_count >= self.reference_debounce:
                 reference_node = reference_node_proposal
                 reference_debounce_count = 0
+                reference_history = 0
+            else:
+                reference_history += 1
 
             if (len(self.reference_node) > 0) and (
                 reference_node != self.reference_node[-1]
