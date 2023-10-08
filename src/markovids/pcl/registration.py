@@ -31,7 +31,7 @@ class DepthVideoPairwiseRegister:
         min_npoints=2000,
         fitness_threshold=0.3,
         current_reference_weight=1.0,
-        reference_debounce=0,
+        reference_debounce=1,
         reference_min_history=2,
         reference_min_npoints=2000,
         reference_future_len=75,
@@ -205,9 +205,11 @@ class DepthVideoPairwiseRegister:
             if reference_debounce_count >= self.reference_debounce:
                 reference_node = reference_node_proposal
                 reference_debounce_count = 0
-                reference_node_history = 0
-            else:
+
+            if (len(self.reference_node) > 0) and (reference_node == self.reference_node[-1]):
                 reference_node_history += 1
+            else:
+                reference_node_history = 0
 
             if (len(self.reference_node) > 0) and (
                 reference_node != self.reference_node[-1]
@@ -263,6 +265,7 @@ class DepthVideoPairwiseRegister:
                 if fitness > self.fitness_threshold:
                     self.current_transform[_cam] = transform
                     self.transforms[_cam][_frame] = transform
+
 
     def get_transforms_multiway(self, pcls, progress_bar=True):
         if self.weights is None:
@@ -337,10 +340,12 @@ class DepthVideoPairwiseRegister:
             if reference_debounce_count >= self.reference_debounce:
                 reference_node = reference_node_proposal
                 reference_debounce_count = 0
-                reference_history = 0
-            else:
-                reference_history += 1
 
+            if (len(self.reference_node) > 0) and (reference_node == self.reference_node[-1]):
+                reference_node_history += 1
+            else:
+                reference_node_history = 0
+            
             if (len(self.reference_node) > 0) and (
                 reference_node != self.reference_node[-1]
             ):
