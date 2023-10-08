@@ -32,6 +32,7 @@ class DepthVideoPairwiseRegister:
         fitness_threshold=0.3,
         current_reference_weight=1.0,
         reference_debounce=0,
+        reference_min_history=2,
         reference_min_npoints=2000,
         reference_future_len=75,
         reference_history_len=25,
@@ -79,6 +80,7 @@ class DepthVideoPairwiseRegister:
         self.cleanup_radius_combined = cleanup_radius_combined
         self.cleanup_sigma_combined = cleanup_sigma_combined
         self.reference_debounce = reference_debounce
+        self.reference_min_history = reference_min_history
         self.reference_history = reference_history_len
         self.reference_future = reference_future_len
         self.reference_medfilt = reference_medfilt
@@ -153,6 +155,7 @@ class DepthVideoPairwiseRegister:
         previous_reference_node_proposal = reference_node
 
         reference_debounce_count = 0
+        reference_node_history = 0
         for _frame in tqdm(
             range(npcls), disable=not progress_bar, desc="Estimating transformations"
         ):
@@ -176,19 +179,18 @@ class DepthVideoPairwiseRegister:
             }
             max_diff = max(weights_diff.values())
             # use smoothed weights to see if we cross threshold...
+            # note that we need the same reference node for AT LEAST 2 frames
+            # or downstream processing will break...
             if (
                 (max_diff <= 0)
                 and (npoints[reference_node] >= self.reference_min_npoints)
                 and (npoints_retain[reference_node] >= self.reference_min_fraction)
-            ):
+            ) or (reference_node_history < self.reference_min_history):
                 reference_node_proposal = reference_node
             else:
                 weights_diff[reference_node] = -np.inf  # exclude ref.
                 tmp = max(weights_diff, key=npoints.get)
                 reference_node_proposal = tmp if npoints[tmp] >= self.reference_min_npoints else reference_node
-
-            # weights_minus_ci = {_cam: self.weights_minus_ci[_cam][_frame] for _cam in cams}
-            # reference_node_proposal = max(weights, key=weights.get)
 
             if (reference_node_proposal != reference_node) and (
                 reference_node_proposal == previous_reference_node_proposal
@@ -198,11 +200,14 @@ class DepthVideoPairwiseRegister:
                 reference_debounce_count = 0
             previous_reference_node_proposal = reference_node_proposal
 
-            # TODO: change to geq? alternatively set baseline to 1, this also may be superfluous with the
-            # smoothing we're using...
+            # if we cross debouncing threshold switch
+            # otherwise stick with current reference node (in which case increment its history)
             if reference_debounce_count >= self.reference_debounce:
                 reference_node = reference_node_proposal
                 reference_debounce_count = 0
+                reference_node_history = 0
+            else:
+                reference_node_history += 1
 
             if (len(self.reference_node) > 0) and (
                 reference_node != self.reference_node[-1]

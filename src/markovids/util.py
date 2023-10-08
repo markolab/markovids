@@ -631,8 +631,8 @@ def fix_breakpoints_combined(
             ]
     
             # caused by debouncing 0, may want to rethink this...
-            if len(matches) < 1:
-                warnings.warn(f"Match between {target} and {source} has only one frame, cannot find transform at {_idx}")
+            if len(matches) < 2:
+                warnings.warn(f"Match between {target} and {source} has less than two frames, cannot find transform at {_idx}")
                 continue
     
             frame_group.append(matches)
