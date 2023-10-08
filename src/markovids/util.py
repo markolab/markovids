@@ -629,6 +629,12 @@ def fix_breakpoints_combined(
             matches = pcl_frame_idx[
                 np.logical_and(pcl_frame_idx >= _idx, pcl_frame_idx < next_frame)
             ]
+    
+            # caused by debouncing 0, may want to rethink this...
+            if len(matches) < 1:
+                warnings.warn(f"Match between {target} and {source} has only one frame, cannot find transform at {_idx}")
+                continue
+    
             frame_group.append(matches)
 
             try:
@@ -856,6 +862,7 @@ def reproject_pcl_to_depth(
 
     batches = range(0, len(pcl_frame_index), batch_size)
 
+    # TODO: project with manual scaling to remove z distortions
     for batch in tqdm(batches, desc="Reproject to depth images"):
         left_edge = batch
         right_edge = min(batch + batch_size, len(pcl_frame_index))
