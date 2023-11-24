@@ -87,6 +87,7 @@ class MP4WriterPreview:
         mark_frames=[],
         marker_color=[0, 0, 255],
         marker_size=.1,
+        inscribe_frame_number=True,
     ):  # may need to enforce endianness...
         if self.pipe is None:
             self.open()
@@ -107,7 +108,8 @@ class MP4WriterPreview:
             zip(frames_idx, write_frames), total=len(frames), disable=not progress_bar
         ):
             _tmp_frame = _frame.copy()
-            inscribe_text(_tmp_frame, str(_idx), font=self.font, text_pos=self.text_pos)
+            if inscribe_frame_number:
+                inscribe_text(_tmp_frame, str(_idx), font=self.font, text_pos=self.text_pos)
             if _idx in mark_frames:
                 mark_frame(_tmp_frame, marker_color, marker_size) 
             _tmp_frame = cv2.cvtColor(_tmp_frame.astype("uint8"), cv2.COLOR_RGB2YUV_I420)
@@ -821,6 +823,7 @@ def get_bground(
     valid_range=(1000, 2000),
     median_kernels=(3, 5),
     interpolate_invalid=True,
+    use_frames=None,
     **kwargs,
 ):
     from scipy import interpolate
@@ -828,7 +831,8 @@ def get_bground(
     ext = os.path.splitext(dat_path)[1]
     reader = AutoReader(dat_path, frame_size=frame_size, dtype=dtype, **kwargs)
     reader.open()
-    use_frames = range(0, reader.nframes, spacing)
+    if use_frames is None:
+        use_frames = range(0, reader.nframes, spacing)
     bground_frames = reader.get_frames(use_frames).astype("float32")
     bground_frames = reader.undistort_frames(bground_frames)
     reader.close()
