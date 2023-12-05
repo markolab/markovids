@@ -1148,7 +1148,7 @@ def alternating_excitation_vid_process(
     nbatches=1,
     burn_in=int(3e2),
     vids=["fluorescence", "reflectance", "merge"],
-    reflect_cmap=plt.matplotlib.colormaps.get_cmap("grey"),
+    reflect_cmap=plt.matplotlib.colormaps.get_cmap("gray"),
     fluo_cmap=plt.matplotlib.colormaps.get_cmap("turbo"),
     fluo_only_cmap=plt.matplotlib.colormaps.get_cmap("magma"),
     reflect_norm=plt.matplotlib.colors.Normalize(vmin=0, vmax=255),
