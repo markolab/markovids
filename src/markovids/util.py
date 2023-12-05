@@ -20,9 +20,18 @@ from markovids.pcl.io import (
 from markovids.pcl.registration import (
     DepthVideoPairwiseRegister,
 )
+from markovids.vid.io import (
+    downsample_frames,
+    read_timestamps_multicam,
+    read_frames_multicam,
+    get_bground,
+    MP4WriterPreview,
+)
+from markovids.vid.util import bp_filter, lp_filter, sos_filter, video_montage
 from collections import defaultdict
 from tqdm.auto import tqdm
 from scipy import ndimage
+import matplotlib.pyplot as plt
 import os
 import numpy as np
 import toml
@@ -474,7 +483,6 @@ def fix_breakpoints_single(
             diffs.append(
                 np.nanmedian(target_xyz, axis=0) - np.nanmedian(source_xyz, axis=0)
             )
-            
 
         # alternatively we can get a different transform for each one
         # except we aggressively trim outliers...
@@ -629,12 +637,14 @@ def fix_breakpoints_combined(
             matches = pcl_frame_idx[
                 np.logical_and(pcl_frame_idx >= _idx, pcl_frame_idx < next_frame)
             ]
-    
+
             # caused by debouncing 0, may want to rethink this...
             if len(matches) < 2:
-                warnings.warn(f"Match between {target} and {source} has less than two frames, cannot find transform at {_idx}")
+                warnings.warn(
+                    f"Match between {target} and {source} has less than two frames, cannot find transform at {_idx}"
+                )
                 continue
-    
+
             frame_group.append(matches)
 
             try:
@@ -725,8 +735,8 @@ def fix_breakpoints_combined(
                 uniq_transform[_pair] = transform
             except IndexError:
                 pass
-        
-        # TODO: add indirect paths here... 
+
+        # TODO: add indirect paths here...
         new_transform = {}
         for (target, source), v in uniq_transform.items():
             try:
@@ -1120,3 +1130,216 @@ def compute_scalars(
     df_scalars.index.name = "frame_id"
 
     return df_scalars
+
+
+# move to markovids and tie into cli, need to call from PACE
+def alternating_excitation_vid_process(
+    dat_paths,
+    ts_paths,
+    load_dct,
+    batch_size=int(1e2),
+    overlap=int(10),
+    bground_spacing=int(1e3),
+    downsample=2,
+    spatial_bp=(1.0, 4.0),
+    temporal_tau=0.1,
+    fluo_threshold_sig=5.0,
+    vid_montage_ncols=3,
+    nbatches=1,
+    burn_in=int(3e2),
+    vids=["fluorescence", "reflectance", "merge"],
+    reflect_cmap=plt.matplotlib.colormaps.get_cmap("grey"),
+    fluo_cmap=plt.matplotlib.colormaps.get_cmap("turbo"),
+    fluo_only_cmap=plt.matplotlib.colormaps.get_cmap("magma"),
+    reflect_norm=plt.matplotlib.colors.Normalize(vmin=0, vmax=255),
+    fluo_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=40),  # in z units
+    fluo_only_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=30),  # in z units
+    vid_paths={
+        "reflectance": "reflectance.mp4",
+        "fluorescence": "fluorescence.mp4",
+        "merge": "merge.mp4",
+    },
+    save_path="_proc",
+):
+    # TODO: assert that all cams have same frame size
+
+    cameras = list(dat_paths.values())
+    vid_montage_nrows = int(np.ceil(len(cameras) / vid_montage_ncols))
+    width, height = load_dct[cameras[0]][
+        "frame_size"
+    ]  # assumes frames are all same size
+    montage_width = (width // downsample) * vid_montage_ncols
+    montage_height = (height // downsample) * vid_montage_nrows
+
+    ts, merged_ts = read_timestamps_multicam(ts_paths, merge_tolerance=0.001)
+    use_merged_ts = (merged_ts.dropna()).iloc[
+        burn_in:
+    ]  # drop cases where we're missing frames from any camera
+
+    ts_fluo = use_merged_ts.loc[
+        np.mod(use_merged_ts.index, 2) == 0
+    ]  # fluorescence is 0,2,4,etc..
+    ts_reflect = use_merged_ts.loc[
+        np.mod(use_merged_ts.index, 2) == 1
+    ]  # reflectance is 1,3,5,...
+
+    fps = 1 / ts_fluo["system_timestamp"].diff().median()
+    total_frames = len(ts_fluo)  # everything is aligned to fluorescence
+
+    # set up videos...
+    vid_writers = {}
+
+    # use the first filename?
+    base_path = os.path.dirname(
+        os.path.normpath(os.path.abspath(list(dat_paths.keys())[0]))
+    )
+    full_save_path = os.path.join(base_path, save_path)
+    os.makedirs(full_save_path, exist_ok=True)
+
+    for _vid in vids:
+        vid_writers[_vid] = MP4WriterPreview(
+            os.path.join(full_save_path, vid_paths[_vid]),
+            frame_size=(montage_width, montage_height),
+            fps=fps,
+        )
+
+    # get background
+    use_frames_bground_fluo = ts_fluo.iloc[::bground_spacing].dropna()
+    read_frames_bground_fluo = {
+        _cam: use_frames_bground_fluo[_cam].astype("int32").to_list()
+        for _cam in cameras
+    }
+    bground_fluo = {
+        _cam: get_bground(
+            _path,
+            valid_range=None,
+            median_kernels=[],
+            agg_func=np.nanmean,
+            use_frames=read_frames_bground_fluo[_cam],
+            **load_dct[_cam],
+        ).astype("uint8")
+        for _path, _cam in tqdm(
+            dat_paths.items(), total=len(dat_paths), desc="Computing background"
+        )
+    }
+    use_bground_fluo = {
+        _cam: downsample_frames(_bground[None, ...], downsample=downsample)[0]
+        for _cam, _bground in bground_fluo.items()
+    }
+
+    # make a batch here...
+    if (nbatches is None) or (nbatches <= 0):
+        nbatches = total_frames // batch_size
+    else:
+        total_frames = min(batch_size * nbatches, total_frames)
+
+    idx = 0
+    for _left_edge in tqdm(
+        range(0, total_frames, batch_size), total=nbatches, desc="Frame batch"
+    ):
+        left_edge = max(_left_edge - overlap, 0)
+        right_edge = min(_left_edge + batch_size, total_frames)
+
+        use_ts_fluo = ts_fluo.iloc[left_edge:right_edge]
+
+        ts_idx = ts_reflect.index.get_indexer(
+            use_ts_fluo.index, method="nearest", tolerance=2
+        )
+        ts_include = np.flatnonzero(ts_idx >= 0)  # -1 if we don't get a match
+
+        use_ts_fluo = use_ts_fluo.iloc[ts_include]
+        use_ts_reflect = ts_reflect.iloc[
+            ts_reflect.index.get_indexer(
+                use_ts_fluo.index, method="nearest", tolerance=2
+            )
+        ]
+
+        read_frames_fluo = {
+            _cam: use_ts_fluo[_cam].astype("int32").to_list() for _cam in cameras
+        }
+        raw_dat_fluo = read_frames_multicam(
+            dat_paths, read_frames_fluo, load_dct, downsample=downsample
+        )
+        read_frames_reflect = {
+            _cam: use_ts_reflect[_cam].astype("int32").to_list() for _cam in cameras
+        }
+        raw_dat_reflect = read_frames_multicam(
+            dat_paths, read_frames_reflect, load_dct, downsample=downsample
+        )
+
+        nframes, height, width = raw_dat_reflect[cameras[0]].shape
+
+        vid_frames = {}
+        for _vid in vids:
+            vid_frames[_vid] = {}
+
+        for _cam in tqdm(cameras, desc="Camera"):
+            # reflect_frames = raw_dat_reflect[_cam].copy()
+            reflect_frames = np.zeros((nframes, height, width, 3), dtype="uint8")
+            for i in range(nframes):
+                reflect_frames[i] = (
+                    reflect_cmap(reflect_norm(raw_dat_reflect[_cam][i]))[..., :3] * 255
+                ).astype("uint8")
+
+            if "reflectance" in vids:
+                vid_frames["reflectance"][_cam] = reflect_frames.copy()
+
+            fluo_frames = np.clip(
+                raw_dat_fluo[_cam].astype("float64")
+                - use_bground_fluo[_cam].astype("float64"),
+                0,
+                np.inf,
+            )  # only want things brighter than background
+            if "fluorescence" in vids:
+                # simple zscore to put everything on relatively equal footing
+                fluo_mu = fluo_frames.mean(axis=(1, 2), keepdims=True)
+                fluo_std = fluo_frames.std(axis=(1, 2), keepdims=True)
+                zfluo_frames = (fluo_frames - fluo_mu) / fluo_std
+                vid_frames["fluorescence"][_cam] = np.clip(
+                    (fluo_only_cmap(fluo_only_norm(zfluo_frames))[..., :3] * 255),
+                    0,
+                    255,
+                ).astype("uint8")
+
+            for i in range(nframes):
+                fluo_frames[i] = bp_filter(
+                    fluo_frames[i], *spatial_bp
+                )  # spatial bandpass
+            fluo_frames = sos_filter(
+                fluo_frames, temporal_tau, fps
+            )  # copy off these frames for fluorescence only...
+
+            fluo_mu = fluo_frames.mean(axis=(1, 2), keepdims=True)
+            fluo_std = fluo_frames.std(axis=(1, 2), keepdims=True)
+
+            fluo_frames -= fluo_mu
+            fluo_frames /= fluo_std
+
+            plt_fluo_frames = np.zeros((nframes, height, width, 3), dtype="uint8")
+            for i in range(nframes):
+                plt_fluo_frames[i] = (
+                    fluo_cmap(fluo_norm(fluo_frames[i]))[..., :3] * 255
+                ).astype("uint8")
+
+            reflect_frames[fluo_frames > fluo_threshold_sig] = plt_fluo_frames[
+                fluo_frames > fluo_threshold_sig
+            ]
+
+            if "merge" in vids:
+                vid_frames["merge"][_cam] = reflect_frames
+
+        for _vid in vids:
+            extra_frames = _left_edge - left_edge  # chop off overhang
+            montage_frames = video_montage(list(vid_frames[_vid].values()), ncols=3)[
+                extra_frames:
+            ]
+            vid_writers[_vid].write_frames(
+                montage_frames,
+                frames_idx=range(idx, idx + len(montage_frames)),
+                progress_bar=False,
+            )
+
+        idx += len(montage_frames)
+
+    for _vid in vids:
+        vid_writers[_vid].close()

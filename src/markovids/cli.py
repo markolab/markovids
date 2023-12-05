@@ -1,12 +1,14 @@
 import click
 import os
 import toml
+import numpy as np
 from markovids.util import (
     convert_depth_to_pcl_and_register,
     reproject_pcl_to_depth,
     fix_breakpoints_combined,
     fix_breakpoints_single,
     compute_scalars,
+    alternating_excitation_vid_process
 )
 
 
@@ -220,6 +222,70 @@ def cli_compute_scalars(
     df_scalars.to_parquet(os.path.join(data_dir, scalar_dir, "scalars.parquet"))
     with open(os.path.join(data_dir, scalar_dir, "scalars.toml"), "w") as f:
         toml.dump(cli_params, f)
+
+
+if __name__ == "__main__":
+    cli()
+
+
+##
+# TODO: qd process into something we can work with for analysis...
+#
+
+# fmt: off
+@cli.command(name="generate-qd-preview", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_QD_PREVIEW"})
+@click.argument("input_dir", type=click.Path(exists=True))
+@click.option("--nbatches", type=int, default=0, show_envvar=True)
+@click.option("--batch-size",type=int, default=int(5e2), show_envvar=True)
+@click.option("--overlap",type=int, default=int(5), show_envvar=True)
+# fmt: on
+def cli_generate_qd_preview(
+    input_dir,
+    nbatches,
+    batch_size,
+    overlap,
+):
+    
+    cli_params = locals()   
+    metadata = toml.load(os.path.join(input_dir, "metadata.toml"))
+
+    user_metadata = metadata["user_input"]
+    cli_metadata = metadata["cli_parameters"]
+
+    fname = "{}_{}_{}_pulse-widths-{}".format(
+        user_metadata["subject"],
+        user_metadata["session"],
+        user_metadata["notes"],
+        cli_metadata["hw_trigger_pulse_width"],
+    )
+
+    cameras = list(metadata["camera_metadata"].keys())
+
+    load_dct = {}
+
+    for camera, cfg in metadata["camera_metadata"].items():
+        load_dct[camera] = {}
+        load_dct[camera]["frame_size"] = (cfg["Width"], cfg["Height"])
+        load_dct[camera]["dtype"] = np.dtype("<u1")
+
+    dat_paths = {os.path.join(input_dir, f"{_cam}.avi"): _cam for _cam in cameras}
+    ts_paths = {os.path.join(input_dir, f"{_cam}.txt"): _cam for _cam in cameras}
+
+    vid_paths={
+        "reflectance": f"{fname}_reflectance.mp4",
+        "fluorescence": f"{fname}_fluorescence.mp4",
+        "merge": f"{fname}_merge.mp4",
+    }
+
+    alternating_excitation_vid_process(
+        dat_paths,
+        ts_paths,
+        load_dct,
+        nbatches=nbatches,
+        batch_size=batch_size,
+        overlap=overlap,
+        vid_paths=vid_paths,
+    )
 
 
 if __name__ == "__main__":

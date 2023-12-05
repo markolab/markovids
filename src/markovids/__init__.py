@@ -5,6 +5,7 @@ try:
 except ModuleNotFoundError:
 	pass
 import markovids.vid.io
+import markovids.vid.util
 # from markovids.vid.io import RawFileReader
 import markovids.depth.plane
 import markovids.depth.filter
