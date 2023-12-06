@@ -8,8 +8,10 @@ from markovids.util import (
     fix_breakpoints_combined,
     fix_breakpoints_single,
     compute_scalars,
-    alternating_excitation_vid_process
+    alternating_excitation_vid_split,
+    alternating_excitation_vid_preview,
 )
+from markovids.vid.io import pixel_format_to_np_dtype
 
 
 @click.group()
@@ -228,10 +230,6 @@ if __name__ == "__main__":
     cli()
 
 
-##
-# TODO: qd process into something we can work with for analysis...
-#
-
 # fmt: off
 @cli.command(name="generate-qd-preview", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_QD_PREVIEW"})
 @click.argument("input_dir", type=click.Path(exists=True))
@@ -262,11 +260,11 @@ def cli_generate_qd_preview(
     cameras = list(metadata["camera_metadata"].keys())
 
     load_dct = {}
-
     for camera, cfg in metadata["camera_metadata"].items():
+        dtype = pixel_format_to_np_dtype(cfg["PixelFormat"])
         load_dct[camera] = {}
         load_dct[camera]["frame_size"] = (cfg["Width"], cfg["Height"])
-        load_dct[camera]["dtype"] = np.dtype("<u1")
+        load_dct[camera]["dtype"] = dtype
 
     dat_paths = {os.path.join(input_dir, f"{_cam}.avi"): _cam for _cam in cameras}
     ts_paths = {os.path.join(input_dir, f"{_cam}.txt"): _cam for _cam in cameras}
@@ -277,7 +275,11 @@ def cli_generate_qd_preview(
         "merge": f"{fname}_merge.mp4",
     }
 
-    alternating_excitation_vid_process(
+    for _vid in vid_paths.values():
+        if os.path.exists(_vid):
+            raise RuntimeError(f"{_vid} already exists, bailing!")
+
+    alternating_excitation_vid_preview(
         dat_paths,
         ts_paths,
         load_dct,
@@ -285,6 +287,41 @@ def cli_generate_qd_preview(
         batch_size=batch_size,
         overlap=overlap,
         vid_paths=vid_paths,
+    )
+
+
+# fmt: off
+@cli.command(name="split-qd-videos", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_QD_PREVIEW"})
+@click.argument("input_dir", type=click.Path(exists=True))
+@click.option("--nbatches", type=int, default=0, show_envvar=True)
+@click.option("--batch-size",type=int, default=int(5e2), show_envvar=True)
+# fmt: on
+def cli_split_qd_vida(
+    input_dir,
+    nbatches,
+    batch_size,
+):
+    
+    cli_params = locals()   
+    metadata = toml.load(os.path.join(input_dir, "metadata.toml"))
+    cameras = list(metadata["camera_metadata"].keys())
+
+    load_dct = {}
+    for camera, cfg in metadata["camera_metadata"].items():
+        dtype = pixel_format_to_np_dtype(cfg["PixelFormat"])
+        load_dct[camera] = {}
+        load_dct[camera]["frame_size"] = (cfg["Width"], cfg["Height"])
+        load_dct[camera]["dtype"] = dtype
+
+    dat_paths = {os.path.join(input_dir, f"{_cam}.avi"): _cam for _cam in cameras}
+    ts_paths = {os.path.join(input_dir, f"{_cam}.txt"): _cam for _cam in cameras}
+
+    alternating_excitation_vid_split(
+        dat_paths,
+        ts_paths,
+        load_dct,
+        nbatches=nbatches,
+        batch_size=batch_size,
     )
 
 

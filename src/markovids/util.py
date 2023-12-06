@@ -4,6 +4,7 @@ from markovids.vid.io import (
     get_bground,
     read_timestamps_multicam,
     read_frames_multicam,
+    AviWriter,
     MP4WriterPreview,
 )
 from markovids.depth.plane import get_floor
@@ -1132,35 +1133,34 @@ def compute_scalars(
     return df_scalars
 
 
-# move to markovids and tie into cli, need to call from PACE
-def alternating_excitation_vid_process(
-    dat_paths,
-    ts_paths,
-    load_dct,
-    batch_size=int(1e2),
-    overlap=int(10),
-    bground_spacing=int(1e3),
-    downsample=2,
-    spatial_bp=(1.0, 4.0),
-    temporal_tau=0.1,
-    fluo_threshold_sig=5.0,
-    vid_montage_ncols=3,
-    nbatches=1,
-    burn_in=int(3e2),
-    vids=["fluorescence", "reflectance", "merge"],
+def alternating_excitation_vid_preview(
+    dat_paths: dict,
+    ts_paths: dict,
+    load_dct: dict,
+    batch_size: int=int(1e2),
+    overlap: int=int(10),
+    bground_spacing: int=int(1e3),
+    downsample: int=2,
+    spatial_bp: tuple=(1.0, 4.0),
+    temporal_tau: float=0.1,
+    fluo_threshold_sig: float=5.0,
+    vid_montage_ncols: int=3,
+    nbatches: int=1,
+    burn_in: int=int(3e2),
+    vids: list=["fluorescence", "reflectance", "merge"],
     reflect_cmap=plt.matplotlib.colormaps.get_cmap("gray"),
     fluo_cmap=plt.matplotlib.colormaps.get_cmap("turbo"),
     fluo_only_cmap=plt.matplotlib.colormaps.get_cmap("magma"),
     reflect_norm=plt.matplotlib.colors.Normalize(vmin=0, vmax=255),
     fluo_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=40),  # in z units
     fluo_only_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=30),  # in z units
-    vid_paths={
+    vid_paths: dict={
         "reflectance": "reflectance.mp4",
         "fluorescence": "fluorescence.mp4",
         "merge": "merge.mp4",
     },
-    save_path="_proc",
-):
+    save_path: str="_proc",
+) -> None:
     # TODO: assert that all cams have same frame size
 
     cameras = list(dat_paths.values())
@@ -1343,3 +1343,125 @@ def alternating_excitation_vid_process(
 
     for _vid in vids:
         vid_writers[_vid].close()
+
+
+# move to markovids and tie into cli, need to call from PACE
+def alternating_excitation_vid_split(
+    dat_paths: dict,
+    ts_paths: dict,
+    load_dct: dict,
+    batch_size: int=int(1e2),
+    nbatches: Optional[int]=None,
+    save_path: str="_proc",
+) -> None:
+    # TODO: assert that all cams have same frame size
+    # TODO: construct filenames from metadata!!!
+    cameras = list(dat_paths.values())
+    width, height = load_dct[cameras[0]][
+        "frame_size"
+    ]  # assumes frames are all same size
+
+    ts, use_merged_ts = read_timestamps_multicam(ts_paths, merge_tolerance=0.001)
+    use_merged_ts = use_merged_ts.dropna()
+    ts_fluo = use_merged_ts.loc[
+        np.mod(use_merged_ts.index, 2) == 0
+    ]  # fluorescence is 0,2,4,etc..
+    ts_reflect = use_merged_ts.loc[
+        np.mod(use_merged_ts.index, 2) == 1
+    ]  # reflectance is 1,3,5,...
+
+    ts_idx = ts_reflect.index.get_indexer(ts_fluo.index, method="nearest", tolerance=2)
+    ts_include = np.flatnonzero(ts_idx >= 0)  # -1 if we don't get a match
+    ts_fluo = ts_fluo.iloc[ts_include]
+    ts_reflect = ts_reflect.iloc[
+        ts_reflect.index.get_indexer(ts_fluo.index, method="nearest", tolerance=2)
+    ]
+
+    fps = 1 / ts_fluo["system_timestamp"].diff().median()
+    total_frames = len(ts_fluo)  # everything is aligned to fluorescence
+
+    # use the first filename?
+    base_path = os.path.dirname(
+        os.path.normpath(os.path.abspath(list(dat_paths.keys())[0]))
+    )
+    full_save_path = os.path.join(base_path, save_path)
+    os.makedirs(full_save_path, exist_ok=True)
+
+    # make a batch here...
+    if nbatches is None:
+        nbatches = total_frames // batch_size
+    else:
+        total_frames = min(batch_size * nbatches, total_frames)
+
+    idx = 0
+
+    fluo_writers = {}
+    reflect_writers = {}
+
+    for _cam in cameras:
+        if load_dct[_cam]["dtype"].itemsize == 2:
+            pixel_format = "gray16le"
+        elif load_dct[_cam]["dtype"].itemsize == 1:
+            pixel_format = "gray"
+        else:
+            raise RuntimeError(f"Can't map {dtype.itemsize} bytes to pixel_format")
+        fluo_writers[_cam] = AviWriter(
+            os.path.join(full_save_path, f"{_cam}-fluorescence.avi"),
+            fps=fps,
+            frame_size=load_dct[_cam]["frame_size"],
+            dtype=load_dct[_cam]["dtype"],
+            pixel_format=pixel_format,
+        )
+        reflect_writers[_cam] = AviWriter(
+            os.path.join(full_save_path, f"{_cam}-reflectance.avi"),
+            fps=np.round(fps),
+            frame_size=load_dct[_cam]["frame_size"],
+            pixel_format=pixel_format,
+            dtype=load_dct[_cam]["dtype"],
+        )
+
+    with open(os.path.join(full_save_path, "timestamps-fluorescence.txt"), "w") as f:
+        f.write(
+            ts_fluo.reset_index().to_string(
+                columns=["frame_id", "system_timestamp"], header=True, index=False
+            )
+        )
+
+    with open(os.path.join(full_save_path, "timestamps-reflectance.txt"), "w") as f:
+        f.write(
+            ts_reflect.reset_index().to_string(
+                columns=["frame_id", "system_timestamp"], header=True, index=False
+            )
+        )
+
+    for _left_edge in tqdm(
+        range(0, total_frames, batch_size), total=nbatches, desc="Frame batch"
+    ):
+        left_edge = _left_edge
+        right_edge = min(_left_edge + batch_size, total_frames)
+
+        use_ts_fluo = ts_fluo.iloc[left_edge:right_edge]
+        use_ts_reflect = ts_reflect.iloc[left_edge:right_edge]
+
+        read_frames_fluo = {
+            _cam: use_ts_fluo[_cam].astype("int32").to_list() for _cam in cameras
+        }
+        raw_dat_fluo = read_frames_multicam(
+            dat_paths, read_frames_fluo, load_dct
+        )
+        read_frames_reflect = {
+            _cam: use_ts_reflect[_cam].astype("int32").to_list() for _cam in cameras
+        }
+        raw_dat_reflect = read_frames_multicam(
+            dat_paths, read_frames_reflect, load_dct
+        )
+
+        for _cam in cameras:
+            fluo_writers[_cam].write_frames(raw_dat_fluo[_cam], progress_bar=False)
+            reflect_writers[_cam].write_frames(
+                raw_dat_reflect[_cam], progress_bar=False
+            )
+
+    for _cam in cameras:
+        fluo_writers[_cam].close()
+        reflect_writers[_cam].close()
