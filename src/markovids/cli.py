@@ -296,7 +296,7 @@ def cli_generate_qd_preview(
 @click.option("--nbatches", type=int, default=0, show_envvar=True)
 @click.option("--batch-size",type=int, default=int(5e2), show_envvar=True)
 # fmt: on
-def cli_split_qd_vida(
+def cli_split_qd_vids(
     input_dir,
     nbatches,
     batch_size,

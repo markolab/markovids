@@ -1388,7 +1388,7 @@ def alternating_excitation_vid_split(
     os.makedirs(full_save_path, exist_ok=True)
 
     # make a batch here...
-    if nbatches is None:
+    if (nbatches is None) or (nbatches <= 0):
         nbatches = total_frames // batch_size
     else:
         total_frames = min(batch_size * nbatches, total_frames)
