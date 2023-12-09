@@ -115,14 +115,23 @@ class MP4WriterPreview:
 
         assert len(frames) == len(frames_idx)
 
-        if (self.pad[0] > 0) or (self.pad[1] > 0): 
-            for i in range(len(frames)):
-                frames[i] = cv2.copyMakeBorder(frames[i], 0, self.pad[1], 0, self.pad[0], cv2.BORDER_REFLECT)
 
-        if frames.ndim == 3:
-            write_frames = pseudocolor_frames(frames, vmin=vmin, vmax=vmax, cmap=self.cmap)
-        elif frames.ndim == 4:
-            write_frames = frames
+        
+        if (self.pad[0] > 0) or (self.pad[1] > 0):
+            use_frames_shape = frames.shape
+            # t x h x w x nchannels
+            use_frames_shape[1] += self.pad[1] # height pad
+            use_frames_shape[2] += self.pad[0] # width pad
+            use_frames = np.zeros(use_frames_shape, dtype=frames.dtype)
+            for i in range(len(frames)):
+                use_frames[i] = cv2.copyMakeBorder(frames[i], 0, self.pad[1], 0, self.pad[0], cv2.BORDER_REFLECT)
+        else:
+            use_frames = frames
+
+        if use_frames.ndim == 3:
+            write_frames = pseudocolor_frames(use_frames, vmin=vmin, vmax=vmax, cmap=self.cmap)
+        elif use_frames.ndim == 4:
+            write_frames = use_frames
         else:
             raise RuntimeError("Wrong number of dims in frame data")
 
