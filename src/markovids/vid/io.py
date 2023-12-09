@@ -5,6 +5,7 @@ import cv2
 import pandas as pd
 import matplotlib.pyplot as plt
 import toml
+import warnings
 from tqdm.auto import tqdm
 from typing import Optional
 
@@ -290,6 +291,9 @@ class RawFileReader:
                 disable=not progress_bar,
             ):
                 frames[i] = cv2.undistort(_frame, self.intrinsic_matrix, self.distortion_coeffs)
+        else:
+            warnings.warn("No intrinsic matrix or distortion matrix, skipping undistortion")
+
         return frames
 
     def get_file_info(self):
@@ -515,6 +519,8 @@ class AviReader:
                 disable=not progress_bar,
             ):
                 frames[i] = cv2.undistort(_frame, self.intrinsic_matrix, self.distortion_coeffs)
+        else:
+            warnings.warn("No intrinsic matrix or distortion coefficients, skipping undistortion")
         return frames
 
     def get_frames(self, frame_range=None, fast_seek=False):
@@ -591,7 +597,11 @@ class AviReader:
         command = (
             ["ffmpeg", "-loglevel", "fatal"]
             + input_opts
-            + ["-i", self.filepath]
+            + ["-i", 
+               self.filepath,
+                "-threads",
+                str(self.threads),
+            ]
             + output_opts
             + [
                 "-f",
@@ -600,7 +610,7 @@ class AviReader:
                 "{:d}x{:d}".format(*self.frame_size),
                 "-pix_fmt",
                 self.pixel_format,
-                "-threads",
+                 "-threads",
                 str(self.threads),
                 "-vcodec",
                 "rawvideo",

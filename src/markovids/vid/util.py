@@ -36,7 +36,6 @@ def sos_filter(x, fps, tau=.01, order=3):
 def lp_filter(x, sigma):
     return cv2.GaussianBlur(x, [0, 0], sigma, sigma)
 
-
 def bp_filter(x, sigma1, sigma2, clip=True):
     return np.clip(
         lp_filter(x, sigma1) - lp_filter(x, sigma2),
