@@ -118,11 +118,11 @@ class MP4WriterPreview:
 
         
         if (self.pad[0] > 0) or (self.pad[1] > 0):
-            use_frames_shape = frames.shape
+            use_frames_shape = list(frames.shape)
             # t x h x w x nchannels
             use_frames_shape[1] += self.pad[1] # height pad
             use_frames_shape[2] += self.pad[0] # width pad
-            use_frames = np.zeros(use_frames_shape, dtype=frames.dtype)
+            use_frames = np.zeros(tuple(use_frames_shape), dtype=frames.dtype)
             for i in range(len(frames)):
                 use_frames[i] = cv2.copyMakeBorder(frames[i], 0, self.pad[1], 0, self.pad[0], cv2.BORDER_REFLECT)
         else:
