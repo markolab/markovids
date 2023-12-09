@@ -36,7 +36,24 @@ class MP4WriterPreview:
         self.threads = threads
         self.slices = slices
         self.slicecrc = slicecrc
-        self.frame_size = frame_size
+        
+        # adjust frame size to be even width and height
+        width, height = frame_size
+
+        if np.mod(width, 2) != 0:
+            width += 1
+            pad_width = 1
+        else:
+            pad_width = 0
+        
+        if np.mod(height, 2) != 0:
+            height += 1
+            pad_height = 1
+        else:
+            pad_height = 0
+
+        self.pad = (pad_width, pad_height)
+        self.frame_size = (width, height)
         self.pipe = None
         self.crf = crf
         self.cmap = plt.get_cmap(cmap)  # only used for intensity images
@@ -97,6 +114,10 @@ class MP4WriterPreview:
             frames_idx = range(len(frames))
 
         assert len(frames) == len(frames_idx)
+
+        if (self.pad[0] > 0) or (self.pad[1] > 0): 
+            for i in range(len(frames)):
+                frames[i] = cv2.copyMakeBorder(frames[i], 0, self.pad[1], 0, self.pad[0], cv2.BORDER_REFLECT)
 
         if frames.ndim == 3:
             write_frames = pseudocolor_frames(frames, vmin=vmin, vmax=vmax, cmap=self.cmap)
