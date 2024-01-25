@@ -1465,3 +1465,10 @@ def alternating_excitation_vid_split(
     for _cam in cameras:
         fluo_writers[_cam].close()
         reflect_writers[_cam].close()
+
+
+# https://stackoverflow.com/questions/8290397/how-to-split-an-iterable-in-constant-size-chunks
+def batch(iterable, n=1):
+    l = len(iterable)
+    for ndx in range(0, l, n):
+        yield iterable[ndx:min(ndx + n, l)]

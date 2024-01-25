@@ -10,8 +10,11 @@ from markovids.util import (
     compute_scalars,
     alternating_excitation_vid_split,
     alternating_excitation_vid_preview,
+    batch,
 )
-from markovids.vid.io import pixel_format_to_np_dtype
+from markovids.vid.io import pixel_format_to_np_dtype, MP4WriterPreview
+from markovids.vid.util import crop_and_rotate_frames
+from tqdm.auto import tqdm
 
 
 @click.group()
@@ -152,7 +155,9 @@ def cli_registration(
     session_name = os.path.normpath(data_dir).split(os.sep)[-1]
     print(f"Session: {session_name}")
     reproject_file = os.path.join(data_dir, registration_dir, f"{session_name}.hdf5")
-    reproject_metadata_file = os.path.join(data_dir, registration_dir, f"{session_name}.toml")
+    reproject_metadata_file = os.path.join(
+        data_dir, registration_dir, f"{session_name}.toml"
+    )
 
     if os.path.exists(reproject_metadata_file):
         reproject_metadata = toml.load(reproject_metadata_file)
@@ -208,10 +213,12 @@ def cli_compute_scalars(
     z_range,
 ):
     cli_params = locals()
-    
+
     registration_dir = os.path.dirname(os.path.abspath(registration_file))
     data_dir = os.path.dirname(registration_dir)
-    os.makedirs(os.path.join(data_dir, scalar_dir), exist_ok=True)  # make directory for output
+    os.makedirs(
+        os.path.join(data_dir, scalar_dir), exist_ok=True
+    )  # make directory for output
     df_scalars = compute_scalars(
         registration_file,
         intrinsics_file,
@@ -224,6 +231,96 @@ def cli_compute_scalars(
     df_scalars.to_parquet(os.path.join(data_dir, scalar_dir, "scalars.parquet"))
     with open(os.path.join(data_dir, scalar_dir, "scalars.toml"), "w") as f:
         toml.dump(cli_params, f)
+
+
+# fmt: off
+@cli.command(name="crop-video", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_CROP"})
+@click.argument("registration_file", type=click.Path(exists=True))
+@click.option("--scalar-path", type=str, default="_scalars/scalars.parquet", help="Path to scalars", show_envvar=True)
+@click.option("--batch-size", type=int, default=3000, show_envvar=True)
+@click.option("--crop-size", type=(int, int), default=(180, 180), show_envvar=True)
+@click.option("--output-dir", type=str, default="_crop")
+@click.option("--preview-cmap", type=str, default="cubehelix")
+@click.option("--preview-clims", type=(float, float), default=(0, 400))
+# fmt: on
+def cli_crop_video(
+    registration_file,
+    batch_size,
+    scalar_path,
+    crop_size,
+    output_dir,
+    preview_cmap,
+    preview_clims,
+):
+    import pandas as pd
+    import h5py
+
+    cli_params = locals()
+
+    registration_dir = os.path.dirname(os.path.abspath(registration_file))
+    base_fname = os.path.basename(os.path.normpath(registration_file))
+    data_dir = os.path.dirname(registration_dir)
+    scalar_file = os.path.join(data_dir, scalar_path)
+    scalars_df = pd.read_parquet(scalar_file, columns=["centroid", "orientation"])
+
+    data_dir = os.path.dirname(registration_dir)
+    os.makedirs(
+        os.path.join(data_dir, output_dir), exist_ok=True
+    )  # make directory for output
+    output_file = os.path.join(data_dir, output_dir, base_fname)
+    output_fname = os.path.splitext(output_file)[0]
+    output_vid = f"{output_fname}.mp4"
+
+    f = h5py.File(registration_file, "r")
+    frames_dset = f["frames"]
+    nframes = len(frames_dset)
+
+    features = {
+        "centroid": scalars_df[["x_mean_px", "y_mean_px"]].to_numpy(),
+        "orientation": scalars_df["orientation_rad"].to_numpy(),
+    }
+
+    crop_f = h5py.File(output_file, "w")
+    crop_f.create_dataset(
+        "cropped_frames",
+        (nframes, crop_size[1], crop_size[0]),
+        "uint16",
+        compression="lzf",
+    )
+
+    writer = MP4WriterPreview(
+        output_vid,
+        frame_size=crop_size,
+        cmap=preview_cmap,
+    )
+
+    read_batches = tqdm(
+        batch(range(nframes), batch_size), total=int(np.ceil(nframes / batch_size))
+    )
+    for _batch in read_batches:
+        _features = {
+            "centroid": features["centroid"][_batch],
+            "orientation": features["orientation"][_batch],
+        }
+        use_frames = frames_dset[_batch]
+        cropped_frames = crop_and_rotate_frames(
+            use_frames, _features, crop_size=crop_size
+        )
+        crop_f["cropped_frames"][_batch] = cropped_frames
+        writer.write_frames(
+            cropped_frames,
+            frames_idx=_batch,
+            vmin=preview_clims[0],
+            vmax=preview_clims[1],
+            inscribe_frame_number=True,
+        )
+
+    with open(f"{output_fname}.toml", "w") as f:
+        toml.dump(cli_params, f)
+
+    writer.close()
+    f.close()
+    crop_f.close()
 
 
 if __name__ == "__main__":
@@ -243,8 +340,7 @@ def cli_generate_qd_preview(
     batch_size,
     overlap,
 ):
-    
-    cli_params = locals()   
+    cli_params = locals()
     metadata = toml.load(os.path.join(input_dir, "metadata.toml"))
 
     user_metadata = metadata["user_input"]
@@ -269,7 +365,7 @@ def cli_generate_qd_preview(
     dat_paths = {os.path.join(input_dir, f"{_cam}.avi"): _cam for _cam in cameras}
     ts_paths = {os.path.join(input_dir, f"{_cam}.txt"): _cam for _cam in cameras}
 
-    vid_paths={
+    vid_paths = {
         "reflectance": f"{fname}_reflectance.mp4",
         "fluorescence": f"{fname}_fluorescence.mp4",
         "merge": f"{fname}_merge.mp4",
@@ -301,8 +397,7 @@ def cli_split_qd_vids(
     nbatches,
     batch_size,
 ):
-    
-    cli_params = locals()   
+    cli_params = locals()
     metadata = toml.load(os.path.join(input_dir, "metadata.toml"))
     cameras = list(metadata["camera_metadata"].keys())
 

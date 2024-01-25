@@ -1,4 +1,5 @@
 from scipy import signal
+from tqdm.auto import tqdm
 import numpy as np
 import cv2
 
@@ -42,3 +43,48 @@ def bp_filter(x, sigma1, sigma2, clip=True):
         0 if clip == True else -np.inf,
         np.inf,
     )
+
+
+def crop_and_rotate_frames(frames, features, crop_size=(80, 80), progress_bar=True):
+    nframes = frames.shape[0]
+    cropped_frames = np.zeros((nframes, crop_size[0], crop_size[1]), frames.dtype)
+    win = (crop_size[0] // 2, crop_size[1] // 2 + 1)
+    border = (crop_size[1], crop_size[1], crop_size[0], crop_size[0])
+
+    for i in tqdm(range(frames.shape[0]), disable=not progress_bar, desc="Rotating"):
+        if np.any(np.isnan(features["centroid"][i, :])):
+            continue
+
+        # use_frame = np.pad(frames[i, ...], (crop_size, crop_size), 'constant', constant_values=0)
+        use_frame = cv2.copyMakeBorder(frames[i, ...], *border, cv2.BORDER_CONSTANT, 0)
+
+        rr = np.arange(
+            features["centroid"][i, 1] - win[0], features["centroid"][i, 1] + win[1]
+        ).astype("int16")
+        cc = np.arange(
+            features["centroid"][i, 0] - win[0], features["centroid"][i, 0] + win[1]
+        ).astype("int16")
+
+        rr = rr + crop_size[0]
+        cc = cc + crop_size[1]
+
+        if (
+            np.any(rr >= use_frame.shape[0])
+            or np.any(rr < 1)
+            or np.any(cc >= use_frame.shape[1])
+            or np.any(cc < 1)
+        ):
+            continue
+
+        rot_mat = cv2.getRotationMatrix2D(
+            (crop_size[0] // 2, crop_size[1] // 2),
+            -np.rad2deg(features["orientation"][i]),
+            1,
+        )
+        cropped_frames[i, :, :] = cv2.warpAffine(
+            use_frame[rr[0] : rr[-1], cc[0] : cc[-1]],
+            rot_mat,
+            (crop_size[0], crop_size[1]),
+        )
+
+    return cropped_frames
