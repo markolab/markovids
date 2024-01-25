@@ -261,7 +261,7 @@ def cli_crop_video(
     base_fname = os.path.basename(os.path.normpath(registration_file))
     data_dir = os.path.dirname(registration_dir)
     scalar_file = os.path.join(data_dir, scalar_path)
-    scalars_df = pd.read_parquet(scalar_file, columns=["centroid", "orientation"])
+    scalars_df = pd.read_parquet(scalar_file, columns=["x_mean_px", "y_mean_px", "orientation_rad"])
 
     data_dir = os.path.dirname(registration_dir)
     os.makedirs(
