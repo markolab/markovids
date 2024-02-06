@@ -13,6 +13,7 @@ dependencies = [
 	"pandas",
 	"h5py",
 	"matplotlib",
+	"onnxruntime",
 	"scikit-image",
 	"scipy",
 	"toml",

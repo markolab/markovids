@@ -239,6 +239,8 @@ def cli_compute_scalars(
 @click.option("--scalar-path", type=str, default="_scalars/scalars.parquet", help="Path to scalars", show_envvar=True)
 @click.option("--batch-size", type=int, default=3000, show_envvar=True)
 @click.option("--crop-size", type=(int, int), default=(180, 180), show_envvar=True)
+@click.option("--flip-model", type=str, default=None)
+@click.option("--flip-model-proba-smoothing", type=int, default=301)
 @click.option("--output-dir", type=str, default="_crop")
 @click.option("--preview-cmap", type=str, default="cubehelix")
 @click.option("--preview-clims", type=(float, float), default=(0, 400))
@@ -247,6 +249,8 @@ def cli_crop_video(
     registration_file,
     batch_size,
     scalar_path,
+    flip_model,
+    flip_model_proba_smoothing,
     crop_size,
     output_dir,
     preview_cmap,
@@ -254,8 +258,28 @@ def cli_crop_video(
 ):
     import pandas as pd
     import h5py
+    import onnxruntime as ort
+    from scipy import signal
+
+    use_flip_model = os.path.exists(flip_model)
 
     cli_params = locals()
+
+    if use_flip_model:
+        print(f"Using flip model: {use_flip_model}")
+        sess = ort.InferenceSession(flip_model, providers=["CPUExecutionProvider"])
+        input_name = sess.get_inputs()[0].name
+
+        basename = os.path.splitext(flip_model)[0]
+        metadata_fname = f"{basename}.toml"
+        flip_model_metadata = toml.load(metadata_fname)
+        flip_model_use_class = int(flip_model_metadata["classifier_categories"]["flip"])
+
+        def apply_flip_model(data):
+            _, width, height = data.shape
+            pred_onx = sess.run(None, {input_name: data.reshape(-1, width * height).astype("float32")})[1]
+            return signal.medfilt(pred_onx[:,flip_model_use_class], flip_model_proba_smoothing) > .5
+
 
     registration_dir = os.path.dirname(os.path.abspath(registration_file))
     base_fname = os.path.basename(os.path.normpath(registration_file))
@@ -277,7 +301,7 @@ def cli_crop_video(
 
     features = {
         "centroid": scalars_df[["x_mean_px", "y_mean_px"]].to_numpy(),
-        "orientation": scalars_df["orientation_rad"].to_numpy(),
+        "orientation": scalars_df["orientation_rad_unwrap"].to_numpy(),
     }
 
     crop_f = h5py.File(output_file, "w")
@@ -298,6 +322,7 @@ def cli_crop_video(
         batch(range(nframes), batch_size), total=int(np.ceil(nframes / batch_size))
     )
     for _batch in read_batches:
+        # predict flips and fix orientation here...
         _features = {
             "centroid": features["centroid"][_batch],
             "orientation": features["orientation"][_batch],
@@ -306,6 +331,13 @@ def cli_crop_video(
         cropped_frames = crop_and_rotate_frames(
             use_frames, _features, crop_size=crop_size
         )
+        if use_flip_model:
+            flips = apply_flip_model(cropped_frames)
+            if len(flips) > 0:
+                cropped_frames[flips] = np.rot90(cropped_frames[flips], k=2, axes=(1,2))
+                # TODO: fix orientation and re-stash
+                # +np.pi to raw orientations and unwrap again...
+
         crop_f["cropped_frames"][_batch] = cropped_frames
         writer.write_frames(
             cropped_frames,

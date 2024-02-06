@@ -1101,8 +1101,9 @@ def compute_scalars(
     scalar_tau_samples = np.round(scalar_tau * fps).astype("int")
     scalar_diff_tau_samples = np.round(scalar_diff_tau * fps).astype("int")
 
+    # CHANGE 2024-02-06: store raw orientations for flip correction...
     df_scalars = pd.DataFrame(all_data, columns=all_columns, index=frame_ids)
-    df_scalars["orientation_rad"] = (
+    df_scalars["orientation_rad_unwrap"] = (
         np.unwrap(df_scalars["orientation_rad"], period=np.pi) + np.pi
     )
     df_scalars["timestamps"] = merged_ts.loc[df_scalars.index, "system_timestamp"]
@@ -1127,7 +1128,7 @@ def compute_scalars(
     df_scalars["velocity_position_angle_rad_s"] = np.arctan2(
         df_scalars_diff["y_mean_mm"], df_scalars_diff["x_mean_mm"]
     )
-    df_scalars["velocity_orientation_rad_s"] = df_scalars_diff["orientation_rad"]
+    df_scalars["velocity_orientation_rad_s"] = df_scalars_diff["orientation_rad_unwrap"]
     df_scalars.index.name = "frame_id"
 
     return df_scalars
