@@ -1103,11 +1103,13 @@ def compute_scalars(
 
     # CHANGE 2024-02-06: store raw orientations for flip correction...
     df_scalars = pd.DataFrame(all_data, columns=all_columns, index=frame_ids)
+    orientation_raw = df_scalars["orientation_rad"].copy()
     df_scalars["orientation_rad_unwrap"] = (
         np.unwrap(df_scalars["orientation_rad"], period=np.pi) + np.pi
     )
-    df_scalars["timestamps"] = merged_ts.loc[df_scalars.index, "system_timestamp"]
-    df_scalars = df_scalars.rolling(scalar_tau_samples, 1, True).mean()
+    df_scalars = df_scalars.rolling(scalar_tau_samples, 1, True).mean() 
+    df_scalars["timestamps"] = merged_ts.loc[df_scalars.index, "system_timestamp"] # DON'T SMOOTH TIMESTAMPS
+    df_scalars["orientation_rad"] = orientation_raw # DON'T SMOOTH RAW ORIENTATIONS!
 
     df_scalars_diff = df_scalars.diff().rolling(scalar_diff_tau_samples, 1, True).mean()
     # divide by period to convert diff into s^-1
