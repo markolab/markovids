@@ -285,9 +285,10 @@ def cli_crop_video(
     base_fname = os.path.basename(os.path.normpath(registration_file))
     data_dir = os.path.dirname(registration_dir)
     scalar_file = os.path.join(data_dir, scalar_path)
-    scalar_metadata_file = os.path.splitext(scalar_file)[0] + ".toml"
     scalars_df = pd.read_parquet(scalar_file, columns=["x_mean_px", "y_mean_px", "orientation_rad"])
-    scalars_metadata = toml.load(scalar_metadata_file)
+
+    # scalar_metadata_file = os.path.splitext(scalar_file)[0] + ".toml"
+    # scalars_metadata = toml.load(scalar_metadata_file)
 
     data_dir = os.path.dirname(registration_dir)
     os.makedirs(
@@ -337,10 +338,10 @@ def cli_crop_video(
             flips = get_flips(cropped_frames)
             if len(flips) > 0:
                 cropped_frames[flips] = np.rot90(cropped_frames[flips], k=2, axes=(1,2))
-                # TODO: fix orientation and re-stash
-                # +np.pi to raw orientations and unwrap again...
-                orientation_arr = scalars_df["orientation_rad"].to_numpy()
+                
+                orientation_arr = scalars_df["orientation_rad"].to_numpy().copy()
                 orientation_arr[flips] += np.pi
+                
                 scalars_df["orientation_rad"] = orientation_arr
                 scalars_df["orientation_rad_unwrap"] = (
                     np.unwrap(scalars_df["orientation_rad"], period=np.pi) + np.pi
