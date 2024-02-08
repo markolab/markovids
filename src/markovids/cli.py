@@ -342,17 +342,10 @@ def cli_crop_video(
         if use_flip_model:
             flips = get_flips(cropped_frames)
             if len(flips) > 0:
-                cropped_frames[flips] = np.rot90(cropped_frames[flips], k=2, axes=(1,2))
-                
+                cropped_frames[flips] = np.rot90(cropped_frames[flips], k=2, axes=(1,2))                
                 orientation_arr = scalars_df["orientation_rad"].to_numpy().copy()
-                orientation_arr[flips] += np.pi
-                
-                scalars_df["orientation_rad"] = orientation_arr
-                scalars_df["orientation_rad_unwrap"] = (
-                    np.unwrap(scalars_df["orientation_rad"], period=np.pi) + np.pi
-                )
-                scalars_df.to_parquet(scalar_file)
-    
+                orientation_arr[_batch[flips]] += np.pi
+
         crop_f["cropped_frames"][_batch] = cropped_frames
         writer.write_frames(
             cropped_frames,
@@ -361,6 +354,12 @@ def cli_crop_video(
             vmax=preview_clims[1],
             inscribe_frame_number=True,
         )
+
+    if use_flip_model:            
+        scalars_df["orientation_rad_unwrap"] = (
+            np.unwrap(scalars_df["orientation_rad"], period=np.pi) + np.pi
+        )
+        scalars_df.to_parquet(scalar_file)
 
     with open(f"{output_fname}.toml", "w") as f:
         toml.dump(cli_params, f)
