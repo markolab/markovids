@@ -344,7 +344,8 @@ def cli_crop_video(
             if len(flips) > 0:
                 cropped_frames[flips] = np.rot90(cropped_frames[flips], k=2, axes=(1,2))                
                 orientation_arr = scalars_df["orientation_rad"].to_numpy().copy()
-                orientation_arr[_batch[flips]] += np.pi
+                flip_idx = list(batch)[flips]
+                orientation_arr[flip_idx] += np.pi
 
         crop_f["cropped_frames"][_batch] = cropped_frames
         writer.write_frames(
