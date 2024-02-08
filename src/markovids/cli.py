@@ -261,7 +261,10 @@ def cli_crop_video(
     import onnxruntime as ort
     from scipy import signal
 
-    use_flip_model = os.path.exists(flip_model)
+    try:
+        use_flip_model = os.path.exists(flip_model)
+    except TypeError:
+        use_flip_model = False
 
     cli_params = locals()
 
