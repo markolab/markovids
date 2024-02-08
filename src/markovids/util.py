@@ -1098,39 +1098,42 @@ def compute_scalars(
         "axis_length_2_px",
     ]
 
-    scalar_tau_samples = np.round(scalar_tau * fps).astype("int")
-    scalar_diff_tau_samples = np.round(scalar_diff_tau * fps).astype("int")
-
+    
     # CHANGE 2024-02-06: store raw orientations for flip correction...
     df_scalars = pd.DataFrame(all_data, columns=all_columns, index=frame_ids)
-    orientation_raw = df_scalars["orientation_rad"].copy()
     df_scalars["orientation_rad_unwrap"] = (
         np.unwrap(df_scalars["orientation_rad"], period=np.pi) + np.pi
-    )
-    df_scalars = df_scalars.rolling(scalar_tau_samples, 1, True).mean() 
-    df_scalars["timestamps"] = merged_ts.loc[df_scalars.index, "system_timestamp"] # DON'T SMOOTH TIMESTAMPS
-    df_scalars["orientation_rad"] = orientation_raw # DON'T SMOOTH RAW ORIENTATIONS!
+    ) 
+    df_scalars["timestamps"] = merged_ts.loc[df_scalars.index, "system_timestamp"]
+    # scalar_tau_samples = np.round(scalar_tau * fps).astype("int")
+    # scalar_diff_tau_samples = np.round(scalar_diff_tau * fps).astype("int")
+    # orientation_raw = df_scalars["orientation_rad"].copy()
 
-    df_scalars_diff = df_scalars.diff().rolling(scalar_diff_tau_samples, 1, True).mean()
-    # divide by period to convert diff into s^-1
-    period = df_scalars["timestamps"].diff()
-    df_scalars_diff = df_scalars_diff.div(period, axis=0)
+    # df_scalars = df_scalars.rolling(scalar_tau_samples, 1, True).mean() 
 
-    velocity_3d = np.sqrt(
-        (df_scalars_diff[["x_mean_mm", "y_mean_mm", "z_mean_mm"]] ** 2).sum(axis=1)
-    )
-    velocity_2d = np.sqrt(
-        (df_scalars_diff[["x_mean_mm", "y_mean_mm"]] ** 2).sum(axis=1)
-    )
-    velocity_z = df_scalars_diff["z_mean_mm"]
+    # TODO: move velocity calculations to a convenience function
+    #       doesn't make sense to hardcode this stuff
+    #
+    # df_scalars_diff = df_scalars.diff().rolling(scalar_diff_tau_samples, 1, True).mean()
+    # # divide by period to convert diff into s^-1
+    # period = df_scalars["timestamps"].diff()
+    # df_scalars_diff = df_scalars_diff.div(period, axis=0)
 
-    df_scalars["velocity_2d_mm_s"] = velocity_2d
-    df_scalars["velocity_3d_mm_s"] = velocity_3d
-    df_scalars["velocity_z_mm_s"] = velocity_z
-    df_scalars["velocity_position_angle_rad_s"] = np.arctan2(
-        df_scalars_diff["y_mean_mm"], df_scalars_diff["x_mean_mm"]
-    )
-    df_scalars["velocity_orientation_rad_s"] = df_scalars_diff["orientation_rad_unwrap"]
+    # velocity_3d = np.sqrt(
+    #     (df_scalars_diff[["x_mean_mm", "y_mean_mm", "z_mean_mm"]] ** 2).sum(axis=1)
+    # )
+    # velocity_2d = np.sqrt(
+    #     (df_scalars_diff[["x_mean_mm", "y_mean_mm"]] ** 2).sum(axis=1)
+    # )
+    # velocity_z = df_scalars_diff["z_mean_mm"]
+
+    # df_scalars["velocity_2d_mm_s"] = velocity_2d
+    # df_scalars["velocity_3d_mm_s"] = velocity_3d
+    # df_scalars["velocity_z_mm_s"] = velocity_z
+    # df_scalars["velocity_position_angle_rad_s"] = np.arctan2(
+    #     df_scalars_diff["y_mean_mm"], df_scalars_diff["x_mean_mm"]
+    # )
+    # df_scalars["velocity_orientation_rad_s"] = df_scalars_diff["orientation_rad_unwrap"]
     df_scalars.index.name = "frame_id"
 
     return df_scalars
