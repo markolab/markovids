@@ -341,11 +341,11 @@ def cli_crop_video(
                 # +np.pi to raw orientations and unwrap again...
                 orientation_arr = scalars_df["orientation_rad"].to_numpy()
                 orientation_arr[flips] += np.pi
-                df_scalars["orientation_rad"] = orientation_arr
-                df_scalars["orientation_rad_unwrap"] = (
-                    np.unwrap(df_scalars["orientation_rad"], period=np.pi) + np.pi
+                scalars_df["orientation_rad"] = orientation_arr
+                scalars_df["orientation_rad_unwrap"] = (
+                    np.unwrap(scalars_df["orientation_rad"], period=np.pi) + np.pi
                 )
-                df_scalars = df_scalars.rolling(scalar_tau_samples, 1, True).mean() 
+                scalars_df.to_parquet(scalar_file)
     
         crop_f["cropped_frames"][_batch] = cropped_frames
         writer.write_frames(
