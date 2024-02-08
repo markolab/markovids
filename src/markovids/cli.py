@@ -288,7 +288,7 @@ def cli_crop_video(
     base_fname = os.path.basename(os.path.normpath(registration_file))
     data_dir = os.path.dirname(registration_dir)
     scalar_file = os.path.join(data_dir, scalar_path)
-    scalars_df = pd.read_parquet(scalar_file, columns=["x_mean_px", "y_mean_px", "orientation_rad"])
+    scalars_df = pd.read_parquet(scalar_file, columns=["x_mean_px", "y_mean_px", "orientation_rad", "orientation_rad_unwrap"])
 
     # scalar_metadata_file = os.path.splitext(scalar_file)[0] + ".toml"
     # scalars_metadata = toml.load(scalar_metadata_file)
