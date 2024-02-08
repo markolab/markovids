@@ -276,11 +276,13 @@ def cli_crop_video(
         basename = os.path.splitext(flip_model)[0]
         metadata_fname = f"{basename}.toml"
         flip_model_metadata = toml.load(metadata_fname)
+        frame_downsample = flip_model_metadata["frame_downsample"]
         flip_model_use_class = int(flip_model_metadata["classifier_categories"]["flip"])
 
         def get_flips(data):
-            _, width, height = data.shape
-            pred_onx = sess.run(None, {input_name: data.reshape(-1, width * height).astype("float32")})[1]
+            use_data = data[:,::frame_downsample, ::frame_downsample]
+            _, width, height = use_data.shape
+            pred_onx = sess.run(None, {input_name: use_data.reshape(-1, width * height).astype("float32")})[1]
             return signal.medfilt(pred_onx[:,flip_model_use_class], flip_model_proba_smoothing) > .5
 
 
