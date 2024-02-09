@@ -318,6 +318,7 @@ def cli_crop_video(
         (nframes, crop_size[1], crop_size[0]),
         "uint16",
         compression="lzf",
+        chunks=(10, crop_size[1], crop_size[0]) # enables more efficient read access
     )
 
     writer = MP4WriterPreview(
