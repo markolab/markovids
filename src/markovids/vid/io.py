@@ -734,6 +734,7 @@ def fill_timestamps(
     to_insert_index = []
     to_insert_values = []
     to_insert_array_loc = []
+    
     for _index, _n_missing in nmissing_frames.items():
         new_idx = np.arange(-_n_missing, 0)
         cap_number = timestamps.loc[_index][capture_number]
@@ -782,11 +783,15 @@ def read_timestamps_multicam(
 
     ts = {}
     for _path, _cam in path.items():
+        # occassionally the filling logic will lead to weird
+        # discontinuities, so sort timestamps after this...
+        # alternatively, interpolate through other means...
         ts[_cam] = read_timestamps(
             _path,
             fill=fill,
             fill_kwargs={"use_timestamp_field": use_timestamp_field},
-        ).rename(columns={"frame_index": _cam})
+        ).rename(columns={"frame_index": _cam}).sort_values(use_timestamp_field)
+
     merged_ts = reduce(
         lambda left, right: pd.merge_asof(
             left,
