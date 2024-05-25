@@ -491,7 +491,7 @@ class AviReader:
     def __init__(
         self,
         filepath,
-        threads=16,
+        threads=None,
         intrinsic_matrix=None,
         distortion_coeffs=None,
         **kwargs,
@@ -523,7 +523,6 @@ class AviReader:
 
         ffmpeg = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
         out, err = ffmpeg.communicate()
-
         if err:
             print(err)
         out = out.decode().split("\n")
@@ -623,15 +622,24 @@ class AviReader:
             ]
         else:
             raise RuntimeError("Did not understand frame range")
+        
+        if self.threads is not None:
+            input_opts1 = [
+               "-threads",
+                str(self.threads),
+                "-i", 
+                self.filepath, 
+            ]
+        else:
+            input_opts1 = [
+                "-i", 
+                self.filepath, 
+            ]
 
         command = (
             ["ffmpeg", "-loglevel", "fatal"]
             + input_opts
-            + ["-i", 
-               self.filepath,
-                "-threads",
-                str(self.threads),
-            ]
+            + input_opts1
             + output_opts
             + [
                 "-f",
@@ -640,8 +648,8 @@ class AviReader:
                 "{:d}x{:d}".format(*self.frame_size),
                 "-pix_fmt",
                 self.pixel_format,
-                 "-threads",
-                str(self.threads),
+                #  "-threads",
+                # str(self.threads),
                 "-vcodec",
                 "rawvideo",
                 "-",
