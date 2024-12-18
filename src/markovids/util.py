@@ -1427,18 +1427,23 @@ def alternating_excitation_vid_split(
         )
 
     with open(os.path.join(full_save_path, "timestamps-fluorescence.txt"), "w") as f:
-        f.write(
-            ts_fluo.reset_index().to_string(
-                columns=["frame_id", "system_timestamp"], header=True, index=False
-            )
-        )
+        # apply repr first...or just use csv
+        # f.write(
+        #     ts_fluo.reset_index().to_string(
+        #         columns=["frame_id", "system_timestamp"], header=True, index=False
+        #     )
+        # )
+        ts_fluo.reset_index().to_csv(f, columns=["frame_id", "system_timestamp"], header=True, index=False)
 
     with open(os.path.join(full_save_path, "timestamps-reflectance.txt"), "w") as f:
-        f.write(
-            ts_reflect.reset_index().to_string(
-                columns=["frame_id", "system_timestamp"], header=True, index=False
-            )
-        )
+        # apply repr first...
+        # f.write(
+        #     ts_reflect.reset_index().to_string(
+        #         columns=["frame_id", "system_timestamp"], header=True, index=False
+        #     )
+        # )
+        ts_reflect.reset_index().to_csv(f, columns=["frame_id", "system_timestamp"], header=True, index=False)
+
 
     for _left_edge in tqdm(
         range(0, total_frames, batch_size), total=nbatches, desc="Frame batch"
