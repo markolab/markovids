@@ -909,6 +909,7 @@ def get_bground(
         )
 
         bground = newz
+        bground = bground.astype("float32") # recast
     # # interpolate nans and filter
     for _med in median_kernels:
         bground = cv2.medianBlur(bground, _med)
