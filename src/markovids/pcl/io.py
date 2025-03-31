@@ -1,4 +1,3 @@
-import open3d as o3d
 import numpy as np
 
 
@@ -52,20 +51,7 @@ def pcl_from_depth(
     if post_scale is not None:
         xyz /= post_scale  # convert mm to m
 
-    if is_tensor:
-        pcl = o3d.t.geometry.PointCloud()
-        pcl.point.positions = o3d.core.Tensor(xyz)
-    else:
-        pcl = o3d.geometry.PointCloud()
-        pcl.points = o3d.utility.Vector3dVector(xyz)
-
-    if estimate_normals:
-        pcl.estimate_normals(o3d.geometry.KDTreeSearchParamKNN(knn=normal_nn))
-
-    # if estimate_covariances:
-    #     pcl.estimate_covariances(o3d.geometry.KDTreeSearchParamKNN(knn=normal_nn))
-
-    return pcl
+    return xyz
 
 
 def depth_from_pcl(
@@ -122,7 +108,9 @@ def depth_from_pcl(
         # maybe consider a small neighborhood??
         for i in np.arange(-transform_neighborhood, +transform_neighborhood + 1):
             for j in np.arange(-transform_neighborhood, +transform_neighborhood + 1):
-                depth_image[np.round(v + i).astype("int"), np.round(u + j).astype("int")] = z
+                depth_image[
+                    np.round(v + i).astype("int"), np.round(u + j).astype("int")
+                ] = z
         # depth_image[np.floor(v).astype("int"), np.floor(u).astype("int")] = z
         # depth_image[np.ceil(v).astype("int"), np.ceil(u).astype("int")] = z
         # depth_image[np.floor(v).astype("int"), np.ceil(u).astype("int")] = z
@@ -139,7 +127,7 @@ def depth_from_pcl(
 
 
 def project_world_coordinates(
-    uvz, z_scale=4.0, floor_distance=None, cx=319., cy=231., fx=525., fy=525.
+    uvz, z_scale=4.0, floor_distance=None, cx=319.0, cy=231.0, fx=525.0, fy=525.0
 ):
     if floor_distance is not None:
         project_z = (floor_distance - uvz[:, 2]) / z_scale
@@ -151,14 +139,21 @@ def project_world_coordinates(
     return np.hstack([x[:, None], y[:, None], z[:, None]])
 
 
-def pxl_to_pcl_coords(uvz, intrinsic_matrix, project_xy=True, post_z_shift=None, z_scale=4.0, post_scale=None):
-    
+def pxl_to_pcl_coords(
+    uvz,
+    intrinsic_matrix,
+    project_xy=True,
+    post_z_shift=None,
+    z_scale=4.0,
+    post_scale=None,
+):
+
     cx = intrinsic_matrix[0, 2]
     cy = intrinsic_matrix[1, 2]
     fx = intrinsic_matrix[0, 0]
     fy = intrinsic_matrix[1, 1]
 
-    raw_z = uvz[:,2].copy().astype("float32") / z_scale
+    raw_z = uvz[:, 2].copy().astype("float32") / z_scale
 
     if post_z_shift is not None:
         use_z = post_z_shift - raw_z
@@ -166,11 +161,11 @@ def pxl_to_pcl_coords(uvz, intrinsic_matrix, project_xy=True, post_z_shift=None,
         use_z = raw_z
 
     if project_xy:
-        x = (uvz[:,0] - cx) * raw_z / fx
-        y = (uvz[:,1] - cy) * raw_z / fy
+        x = (uvz[:, 0] - cx) * raw_z / fx
+        y = (uvz[:, 1] - cy) * raw_z / fy
     else:
-        x = uvz[:,0]
-        y = uvz[:,1]
+        x = uvz[:, 0]
+        y = uvz[:, 1]
 
     valid_points = ~np.isnan(use_z) & (use_z > 0)
     xyz = np.array(
@@ -184,11 +179,14 @@ def pxl_to_pcl_coords(uvz, intrinsic_matrix, project_xy=True, post_z_shift=None,
     return xyz
 
 
-
-
 # use this to speed up cropping...
 def pcl_to_pxl_coords(
-    xyz, intrinsic_matrix, project_xy=True, post_z_shift=None, z_scale=4.0, post_scale=None
+    xyz,
+    intrinsic_matrix,
+    project_xy=True,
+    post_z_shift=None,
+    z_scale=4.0,
+    post_scale=None,
 ):
     cx = intrinsic_matrix[0, 2]
     cy = intrinsic_matrix[1, 2]
@@ -336,7 +334,7 @@ def depth_from_pcl_interpolate(
 # also see https://github.com/nghiaho12/rigid_transform_3D/blob/master/rigid_transform_3D.py
 def trim_outliers(points, thresh=3):
     median = np.median(points, axis=0)
-    diff = np.sum((points - median)**2, axis=-1)
+    diff = np.sum((points - median) ** 2, axis=-1)
     diff = np.sqrt(diff)
     med_abs_deviation = np.median(diff)
     modified_z_score = 0.6745 * diff / med_abs_deviation

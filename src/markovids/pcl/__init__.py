@@ -1,6 +1,5 @@
 # note that these are optional...
-try:
-	import markovids.pcl.io
-	import markovids.pcl.registration
-except ModuleNotFoundError:
-	pass
+import markovids.pcl.io
+import markovids.pcl.registration
+import markovids.pcl.kpoints
+import markovids.pcl.viz
