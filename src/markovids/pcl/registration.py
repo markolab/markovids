@@ -98,6 +98,7 @@ def bundle_adjust_rigid_fixed_structure(
     weights_C=None,
     huber_delta=5.0,
     jac_sparsity=None,
+    **kwargs,
 ):
     N = points_A.shape[0]
 
@@ -119,9 +120,8 @@ def bundle_adjust_rigid_fixed_structure(
         args=(points_A, points_B, points_C, weights_B, weights_C),
         loss="huber",
         f_scale=huber_delta,
-        # method='trf',
         jac_sparsity=jac_sparsity,
-        verbose=2,
+        **kwargs,
     )
 
     rv_B, t_B = result.x[0:3], result.x[3:6]
