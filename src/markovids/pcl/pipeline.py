@@ -76,7 +76,7 @@ def registration_pipeline(
         raise RuntimeError(
             "Need intrinsics and distortion_coefficients dictionaries to continue"
         )
-    
+
     cx = intrinsics_matrix[reference_camera][0, 2]
     cy = intrinsics_matrix[reference_camera][1, 2]
     fx = intrinsics_matrix[reference_camera][0, 0]
@@ -185,7 +185,7 @@ def registration_pipeline(
         ref_points = proj_points[ref_index]
         for _frame in range(nframes):
             with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', category=RuntimeWarning)
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
                 bias = np.nanmean(use_points[_frame] - ref_points[_frame], axis=0)[:3]
             # any nans should be replaced by most recent bias term...
             bias[np.isnan(bias)] = 0
@@ -204,7 +204,7 @@ def registration_pipeline(
         # merged_conf[_frame] = proj_points
         if merge_method == "weighted":
             with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', category=RuntimeWarning)
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
                 weighted_average = np.nansum(
                     (proj_points[:, _frame, :, :3] * weights), axis=0
                 ) / np.nansum(weights, axis=0)
@@ -319,7 +319,10 @@ def registration_pipeline(
     metadata["transforms"] = {str(k): v for k, v in metadata["transforms"].items()}
 
     with open(
-        os.path.join(use_data_dir, f"{os.path.splitext(save_file)[0]}.toml"), "w"
+        os.path.join(
+            use_data_dir, kpoints_save_dir, f"{os.path.splitext(save_file)[0]}.toml"
+        ),
+        "w",
     ) as f:
         toml.dump(metadata, f, encoder=toml.TomlNumpyEncoder())
 
