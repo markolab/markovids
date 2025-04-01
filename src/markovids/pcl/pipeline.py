@@ -48,8 +48,8 @@ renderer_kwargs = {
     "xlim": (-175, 225),
     "ylim": (-125, 275),
     "zlim": (-10, 105),
-    "elevation": 30,
-    "azimuth": 65,
+    # "elevation": 30,
+    # "azimuth": 65,
 }
 
 
@@ -282,29 +282,6 @@ def registration_pipeline(
     all_roi_points = np.concatenate(list(all_bgrounds.values()))
     all_roi_points = np.unique(all_roi_points, axis=0)
 
-
-    arr_slice = slice(mp4_burn_in, nframes)
-    frame_ids = range(mp4_burn_in, nframes)
-    movie_file = f"{os.path.splitext(save_file)[0]}.mp4"
-    if mp4_renderer == "matplotlib":
-        pcl.viz.visualize_xyz_trajectories_to_mp4(
-            merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
-            os.path.join(use_data_dir, kpoints_save_dir, movie_file),
-            fps=100,
-            frame_ids=frame_ids,
-            **renderer_kwargs,
-        )
-    elif mp4_renderer == "vedo":
-        pcl.viz.visualize_xyz_trajectories_vedo(
-            merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
-            os.path.join(use_data_dir, kpoints_save_dir, movie_file),
-            fps=100,
-            frame_ids=frame_ids,
-            **renderer_kwargs,
-        )
-    else:
-        pass
-
     timestamps = use_frames["system_timestamp"].to_numpy()
     with h5py.File(os.path.join(use_data_dir, kpoints_save_dir, save_file), "w") as f:
         f.create_dataset(
@@ -345,3 +322,25 @@ def registration_pipeline(
         os.path.join(use_data_dir, f"{os.path.splitext(save_file)[0]}.toml"), "w"
     ) as f:
         toml.dump(metadata, f, encoder=toml.TomlNumpyEncoder())
+
+    arr_slice = slice(mp4_burn_in, nframes)
+    frame_ids = range(mp4_burn_in, nframes)
+    movie_file = f"{os.path.splitext(save_file)[0]}.mp4"
+    if mp4_renderer == "matplotlib":
+        pcl.viz.visualize_xyz_trajectories_to_mp4(
+            merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
+            os.path.join(use_data_dir, kpoints_save_dir, movie_file),
+            fps=100,
+            frame_ids=frame_ids,
+            **renderer_kwargs,
+        )
+    elif mp4_renderer == "vedo":
+        pcl.viz.visualize_xyz_trajectories_vedo(
+            merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
+            os.path.join(use_data_dir, kpoints_save_dir, movie_file),
+            fps=100,
+            frame_ids=frame_ids,
+            **renderer_kwargs,
+        )
+    else:
+        pass
