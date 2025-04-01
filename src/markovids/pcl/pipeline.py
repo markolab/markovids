@@ -281,6 +281,15 @@ def registration_pipeline(
         all_bgrounds[_cam] = np.round((R[:2, :2] @ roi_points).T + t[:2]).astype("int")
     all_roi_points = np.concatenate(list(all_bgrounds.values()))
     all_roi_points = np.unique(all_roi_points, axis=0)
+    all_roi_points_proj = pcl.io.project_world_coordinates(
+        np.hstack([all_roi_points, np.zeros((all_roi_points.shape[0],1))]),
+        floor_distance=floor_distance,
+        cx=cx,
+        cy=cy,
+        fx=fx,
+        fy=fy,
+        z_scale=z_scale,
+    )
 
     timestamps = use_frames["system_timestamp"].to_numpy()
     with h5py.File(os.path.join(use_data_dir, kpoints_save_dir, save_file), "w") as f:
@@ -303,7 +312,7 @@ def registration_pipeline(
             "timestamps", data=timestamps.astype("float64"), compression="gzip"
         )
         f.create_dataset("roi", data=bground_roi, compression="gzip")
-        f.create_dataset("roi_merged", data=all_roi_points, compression="gzip")
+        f.create_dataset("roi_merged", data=all_roi_points_proj, compression="gzip")
 
     metadata["transforms"] = new_transforms
     metadata["transform_type"] = "rigid"
