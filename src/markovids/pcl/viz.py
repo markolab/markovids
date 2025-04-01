@@ -24,6 +24,7 @@ def visualize_xyz_trajectories_to_mp4(
     color_map="tab10",
     trail_length=10,
     frame_ids=None,
+    progress_bar=True,
 ):
     T, N, _ = xyz.shape
     cmap = plt.get_cmap(color_map)
@@ -74,7 +75,7 @@ def visualize_xyz_trajectories_to_mp4(
         T = np.arange(T)
     
     with writer.saving(fig, output_path, dpi=200):
-        for t, _frame_id in tqdm(enumerate(T), total=len(T)):
+        for t, _frame_id in tqdm(enumerate(T), total=len(T), disable=not progress_bar):
             frame_xyz = xyz[t]
 
             # Update scatter positions
@@ -277,6 +278,7 @@ def visualize_xyz_trajectories_vedo(
     azimuth=None,
     elevation=None,
     frame_ids=None,
+    progress_bar=True,
 ):
     from vedo import Plotter, Points, Point, Line, Video, Plane, Arrows, Text2D
 
@@ -376,7 +378,7 @@ def visualize_xyz_trajectories_vedo(
     else:
         T = np.arange(T)
     
-    for t, _frame_id in tqdm(enumerate(T), total=len(T)):
+    for t, _frame_id in tqdm(enumerate(T), total=len(T), disable=not progress_bar):
         frame = xyz[t]
         # print(frame)
 

@@ -285,10 +285,11 @@ def registration_pipeline(
 
     arr_slice = slice(mp4_burn_in, nframes)
     frame_ids = range(mp4_burn_in, nframes)
+    movie_file = f"{os.path.splitext(save_file)[0]}.mp4"
     if mp4_renderer == "matplotlib":
         pcl.viz.visualize_xyz_trajectories_to_mp4(
             merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
-            os.path.join(use_data_dir, "keypoints_xyz.mp4"),
+            os.path.join(use_data_dir, kpoints_save_dir, movie_file),
             fps=100,
             frame_ids=frame_ids,
             **renderer_kwargs,
@@ -296,7 +297,7 @@ def registration_pipeline(
     elif mp4_renderer == "vedo":
         pcl.viz.visualize_xyz_trajectories_vedo(
             merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
-            os.path.join(use_data_dir, "keypoints_xyz.mp4"),
+            os.path.join(use_data_dir, kpoints_save_dir, movie_file),
             fps=100,
             frame_ids=frame_ids,
             **renderer_kwargs,
@@ -305,7 +306,7 @@ def registration_pipeline(
         pass
 
     timestamps = use_frames["system_timestamp"].to_numpy()
-    with h5py.File(os.path.join(use_data_dir, save_file), "w") as f:
+    with h5py.File(os.path.join(use_data_dir, kpoints_save_dir, save_file), "w") as f:
         f.create_dataset(
             "merged_keypoints_smooth",
             data=merged_data_proj_smooth.astype("float32"),
