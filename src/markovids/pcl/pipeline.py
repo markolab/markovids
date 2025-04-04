@@ -93,11 +93,11 @@ def registration_pipeline(
     fy = intrinsics_matrix[reference_camera][1, 1]
 
     cameras = list(intrinsics_matrix.keys())
-
+    metadata_file = os.path.join(use_data_dir, "metadata.toml")
     try:
-        metadata = toml.load(os.path.join(use_data_dir, "metadata.toml"))
+        metadata = toml.load(metadata_file)
     except FileNotFoundError as e:
-        warnings.warn(f"Did not find metadata file {os.path.join(use_data_dir, "metadata.toml")}")
+        warnings.warn(f"Did not find metadata file {metadata_file}")
         return None
 
     bground_file = os.path.join(use_data_dir, "_bground", f"{reference_camera}.tiff")
