@@ -331,9 +331,20 @@ def registration_pipeline(
             data=merged_conf.astype("float32"),
             compression="gzip",
         )
-        f.create_dataset(
-            "timestamps", data=timestamps.astype("float64"), compression="gzip"
-        )
+
+        for _col in use_frames.columns:
+            f.create_dataset(
+                f"index/{_col}",
+                data=use_frames[_col].to_numpy(),
+                compression="gzip"
+            )
+
+        f.create_dataset(f"index/frame_id",
+                         data=use_frames.index.to_numpy(),
+                         compression="gzip")
+        # f.create_dataset(
+        #     "timestamps", data=timestamps.astype("float64"), compression="gzip"
+        # )
         f.create_dataset("roi", data=bground_roi, compression="gzip")
         f.create_dataset("roi_merged", data=all_roi_points_proj, compression="gzip")
 
