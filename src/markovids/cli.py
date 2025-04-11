@@ -39,7 +39,7 @@ def cli_compute_scalars(
     z_range,
 ):
     cli_params = locals()
-
+    from markovids.util import compute_scalars
     registration_dir = os.path.dirname(os.path.abspath(registration_file))
     data_dir = os.path.dirname(registration_dir)
     os.makedirs(
