@@ -3,7 +3,6 @@ import os
 import toml
 import numpy as np
 from markovids.util import (
-    compute_scalars,
     alternating_excitation_vid_split,
     alternating_excitation_vid_preview,
     batch,
