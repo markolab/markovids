@@ -8,6 +8,7 @@ def pack_params(*args):
     params = ["x0", "y0", "sigma_x", "sigma_y", "theta", "amplitude", "offset"]
     for _param, _arg in zip(params, args):
         param_dct[_param] = _arg
+    return param_dct
 
 @jit(nopython=True)
 def gaussian_2d(coords, x0, y0, sigma_x, sigma_y, theta, amplitude, offset):
