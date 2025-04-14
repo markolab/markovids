@@ -4,6 +4,7 @@ from . import registration
 from . import kpoints
 from . import viz
 from . import pipeline
+from . import fluo
 # import markovids.pcl.io
 # import markovids.pcl.registration
 # import markovids.pcl.kpoints
