@@ -137,7 +137,7 @@ def fit_2d_gaussian_with_moments(image):
     offset = np.median(image)
 
     initial_guess = [x0, y0, sigma_x, sigma_y, theta, amplitude, offset]
-    initial_guess_dct = pack_params(initial_guess)
+    initial_guess_dct = pack_params(*initial_guess)
     bounds = (
         [-1, -1, 0.5, 0.5, -np.pi, 0, 0],
         [
@@ -164,7 +164,7 @@ def fit_2d_gaussian_with_moments(image):
             loss="linear",
         )
         if result.success:
-            param_dct = pack_params(result.x)
+            param_dct = pack_params(*result.x)
             return param_dct, initial_guess_dct
         else:
             return None, initial_guess_dct
