@@ -114,7 +114,7 @@ def get_closest_blob(roi_image, min_size=5):
     return mask
 
 
-def fit_2d_gaussian_with_moments(image):
+def fit_2d_gaussian_with_moments(image, loss="linear"):
     from scipy.optimize import least_squares
     # Create coordinate grid
     y, x = np.indices(image.shape)
@@ -161,7 +161,7 @@ def fit_2d_gaussian_with_moments(image):
             x0=initial_guess, 
             bounds=bounds, 
             method="trf", 
-            loss="linear",
+            loss=loss,
         )
         if result.success:
             param_dct = pack_params(*result.x)
