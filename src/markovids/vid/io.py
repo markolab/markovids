@@ -665,9 +665,25 @@ class AviReader:
         total_bytes = len(out)
         bytes_per_frame = (self.bit_depth / 8) * np.prod(self.frame_size)
         n_out_frames = int(total_bytes / bytes_per_frame)
-        dat = np.frombuffer(out, dtype=self.dtype).reshape(
-            (n_out_frames, self.frame_size[1], self.frame_size[0])
-        )
+
+        if self.pixel_format == "gray":
+            dat = np.frombuffer(out, dtype=self.dtype).reshape(
+                (n_out_frames, self.frame_size[1], self.frame_size[0])
+            )
+        elif (self.pixel_format == "bgr0") or (self.pixel_format == "rgb0"):
+            dat = np.frombuffer(out, dtype=self.dtype).reshape(
+                (n_out_frames, 4, self.frame_size[1], self.frame_size[0])
+            )
+        elif (self.pixel_format == "bgra") or (self.pixel_format == "rgba"):
+            dat = np.frombuffer(out, dtype=self.dtype).reshape(
+                (n_out_frames, 4, self.frame_size[1], self.frame_size[0])
+            )
+        elif (self.pixel_format == "bgr24") or (self.pixel_format == "rgb24"):
+            dat = np.frombuffer(out, dtype=self.dtype).reshape(
+                (n_out_frames, 3, self.frame_size[1], self.frame_size[0])
+            ) 
+        else:
+            raise RuntimeError(f"Did not understand pixel format {self.pixel_format}")
         if list_order is not None:
             dat = dat[list_order]
         return dat
