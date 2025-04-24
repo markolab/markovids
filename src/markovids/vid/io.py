@@ -680,7 +680,7 @@ class AviReader:
         n_out_frames = int(total_bytes / bytes_per_frame)
 
         dat = np.frombuffer(out, dtype=self.dtype).reshape(
-            (n_out_frames, nchannels, self.frame_size[1], self.frame_size[0])
+            (n_out_frames, self.frame_size[1], self.frame_size[0], nchannels)
         ).squeeze()
         if list_order is not None:
             dat = dat[list_order]
