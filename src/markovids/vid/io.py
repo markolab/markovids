@@ -665,7 +665,8 @@ class AviReader:
         total_bytes = len(out)
         nchannels = 1
 
-        if self.pixel_format == "gray":
+        # TODO ADD little endian here, we don't support big-endian for now...
+        if (self.pixel_format == "gray") or (self.pixel_format == "gray16le"):
             nchannels = 1
         elif (self.pixel_format == "bgr0") or (self.pixel_format == "rgb0"):
             nchannels = 4
