@@ -39,7 +39,7 @@ def fit_ransac(
     iters=1000,
     noise_tolerance=30,
     in_ratio=0.1,
-    progress_bar=True,
+    progress_bar=False,
     mask=None,
 ):
     """Naive RANSAC implementation for plane fitting

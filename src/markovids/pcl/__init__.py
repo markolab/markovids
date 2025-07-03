@@ -1,6 +1,12 @@
 # note that these are optional...
-try:
-	import markovids.pcl.io
-	import markovids.pcl.registration
-except ModuleNotFoundError:
-	pass
+from . import io
+from . import registration
+from . import kpoints
+from . import viz
+from . import pipeline
+from . import fluo
+# import markovids.pcl.io
+# import markovids.pcl.registration
+# import markovids.pcl.kpoints
+# import markovids.pcl.viz
+# import markovids.pcl.pipeline

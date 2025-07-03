@@ -21,8 +21,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-pcl = [
-	"open3d"
+vedo = [
+	"vedo",
+	"imageio[ffmpeg]"
 ]
 
 # [tool.setuptools.packages.find]
