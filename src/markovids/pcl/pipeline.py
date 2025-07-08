@@ -10,6 +10,8 @@ import warnings
 import pandas as pd
 from markovids import depth, vid, pcl, util
 
+from pathlib import Path
+
 # defaults...
 reference_camera = "Lucid Vision Labs-HTP003S-001-224500508"
 incl_kpoints_fit_transform = [
@@ -80,7 +82,18 @@ def registration_pipeline(
     mp4_renderer="vedo",
     mp4_burn_in=50,
     save_file="merged_keypoints.h5",
+    alt_save_dir=None,
+    meta_path = None
 ):
+
+    if alt_save_dir:
+        output_path = os.path.join(alt_save_dir, kpoints_save_dir)
+        os.makedirs(os.path.join(alt_save_dir, kpoints_save_dir), exist_ok=True)
+    else:
+        output_path = os.path.join(use_data_dir, kpoints_save_dir)
+        
+    if os.path.exists(os.path.join(output_path, save_file)): # already been processed
+        return None
 
     if (intrinsics_matrix is None) or (distortion_coefficients is None):
         raise RuntimeError(
@@ -93,7 +106,9 @@ def registration_pipeline(
     fy = intrinsics_matrix[reference_camera][1, 1]
 
     cameras = list(intrinsics_matrix.keys())
-    metadata_file = os.path.join(use_data_dir, "metadata.toml")
+
+    metadata_path = use_data_dir if meta_path is None else meta_path
+    metadata_file = os.path.join(metadata_path, "metadata.toml")
     try:
         metadata = toml.load(metadata_file)
     except FileNotFoundError as e:
@@ -125,14 +140,16 @@ def registration_pipeline(
     ts_paths = {os.path.join(use_data_dir, f"{_cam}.txt"): _cam for _cam in cameras}
     ts, merged_ts = vid.io.read_timestamps_multicam(ts_paths, merge_tolerance=0.0035)
 
+
     kpoints_dat = {}
     for _cam in cameras:
         kpoints_dat[_cam] = joblib.load(
             os.path.join(use_data_dir, kpoints_save_dir, f"{_cam}.pkl.gz")
         )
 
+
     # only include fully sync'd data...
-    use_frames = merged_ts.dropna()
+    use_frames = merged_ts.dropna().astype(np.int)
 
     for _cam in cameras:
         kpoints_dat[_cam] = kpoints_dat[_cam][use_frames[_cam]]
@@ -315,7 +332,8 @@ def registration_pipeline(
     )
 
     timestamps = use_frames["system_timestamp"].to_numpy()
-    with h5py.File(os.path.join(use_data_dir, kpoints_save_dir, save_file), "w") as f:
+
+    with h5py.File(os.path.join(output_path, save_file), "w") as f:
         f.create_dataset(
             "merged_keypoints_smooth",
             data=merged_data_proj_smooth.astype("float32"),
@@ -361,10 +379,12 @@ def registration_pipeline(
     metadata["kpoints"] = kpoints_metadata
     metadata["transforms"] = {str(k): v for k, v in metadata["transforms"].items()}
 
+    toml_path = os.path.join(output_path, f"{os.path.splitext(save_file)[0]}.toml")
     with open(
-        os.path.join(
-            use_data_dir, kpoints_save_dir, f"{os.path.splitext(save_file)[0]}.toml"
-        ),
+        # os.path.join(
+        #     use_data_dir, kpoints_save_dir, f"{os.path.splitext(save_file)[0]}.toml"
+        # ),
+        toml_path,
         "w",
     ) as f:
         toml.dump(metadata, f, encoder=toml.TomlNumpyEncoder())
@@ -376,10 +396,11 @@ def registration_pipeline(
     arr_slice = slice(mp4_burn_in, max_render_frames)
     frame_ids = range(mp4_burn_in, max_render_frames)
     movie_file = f"{os.path.splitext(save_file)[0]}.mp4"
+
     if mp4_renderer == "matplotlib":
         pcl.viz.visualize_xyz_trajectories_to_mp4(
             merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
-            os.path.join(use_data_dir, kpoints_save_dir, movie_file),
+            os.path.join(output_path,movie_file),
             fps=100,
             frame_ids=frame_ids,
             **renderer_kwargs,
@@ -387,7 +408,7 @@ def registration_pipeline(
     elif mp4_renderer == "vedo":
         pcl.viz.visualize_xyz_trajectories_vedo(
             merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
-            os.path.join(use_data_dir, kpoints_save_dir, movie_file),
+            os.path.join(output_path, movie_file),
             fps=100,
             frame_ids=frame_ids,
             **renderer_kwargs,

@@ -517,11 +517,15 @@ class AviReader:
             "stream=width,height,pix_fmt,r_frame_rate,bits_per_raw_sample,nb_frames",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-            self.filepath,
+            f'"{self.filepath}"',
             "-sexagesimal",
         ]
 
-        ffmpeg = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        activate = "source ~/conda_activate"
+        ffprobe_cmd = " ".join(command)
+        full_cmd = f"{activate} ; {ffprobe_cmd}"
+
+        ffmpeg = subprocess.Popen(full_cmd, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
         out, err = ffmpeg.communicate()
         if err:
             print(err)
@@ -628,12 +632,12 @@ class AviReader:
                "-threads",
                 str(self.threads),
                 "-i", 
-                self.filepath, 
+                f'"{self.filepath}"', 
             ]
         else:
             input_opts1 = [
                 "-i", 
-                self.filepath, 
+                f'"{self.filepath}"', 
             ]
 
         command = (
@@ -656,7 +660,11 @@ class AviReader:
             ]
         )
 
-        pipe = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        activate = "source ~/conda_activate"
+        ffprobe_cmd = " ".join(command)
+        full_cmd = f"{activate} ; {ffprobe_cmd}"
+
+        pipe = subprocess.Popen(full_cmd, stderr=subprocess.PIPE, shell=True, stdout=subprocess.PIPE)
         out, err = pipe.communicate()
         if err:
             print("error", err)
@@ -665,7 +673,7 @@ class AviReader:
         total_bytes = len(out)
         nchannels = 1
 
-        if self.pixel_format == "gray":
+        if self.pixel_format == "gray" or self.pixel_format == "gray16le":
             nchannels = 1
         elif (self.pixel_format == "bgr0") or (self.pixel_format == "rgb0"):
             nchannels = 4
@@ -775,6 +783,14 @@ def fill_timestamps(
     new_timestamps.index = new_timestamps.index.astype("int")
     # new_timestamps.index = range(len(new_timestamps))  # should be contiguous anyhow...
     new_timestamps["frame_index"] = new_timestamps["frame_index"].astype("Int32")
+
+
+    # TODO Drop last row if timestamp is NaN; is last frame is NaN, then
+    # it passes previous checks and doesn't interpolate
+    # 
+    # May not be a common enough issue, but if last
+    if pd.isna(new_timestamps[use_timestamp_field].iloc[-1]):
+        new_timestamps = new_timestamps.iloc[:-1]
 
     return new_timestamps
 
