@@ -204,14 +204,16 @@ if __name__ == "__main__":
 @cli.command(name="generate-qd-preview", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_QD_PREVIEW"})
 @click.argument("input_dir", type=click.Path(exists=True))
 @click.option("--nbatches", type=int, default=0, show_envvar=True)
-@click.option("--batch-size",type=int, default=int(5e2), show_envvar=True)
+@click.option("--batch-size",type=int, default=int(2.5e2), show_envvar=True)
 @click.option("--overlap",type=int, default=int(5), show_envvar=True)
+@click.option("--downsample", type=int, default=int(1), show_envvar=True)
 # fmt: on
 def cli_generate_qd_preview(
     input_dir,
     nbatches,
     batch_size,
     overlap,
+    downsample,
 ):
     cli_params = locals()
     metadata = toml.load(os.path.join(input_dir, "metadata.toml"))
@@ -256,6 +258,7 @@ def cli_generate_qd_preview(
         batch_size=batch_size,
         overlap=overlap,
         vid_paths=vid_paths,
+        downsample=downsample,
     )
 
 
