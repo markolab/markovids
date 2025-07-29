@@ -840,7 +840,7 @@ def read_timestamps_multicam(
     capture_number: str = "frame_id",
     merge_tolerance: float = 0.002,
     fill: bool = False,
-    multiplexed: bool = False,
+    multiplexed: bool = True,
     return_equal_frames: bool = True,
     burn_in: int = 300,
     reference_camera: str = None,

@@ -1,6 +1,7 @@
 from typing import Tuple, Optional
 from markovids.vid.io import (
     get_bground,
+    downsample_frames,
     read_timestamps_multicam,
     read_frames_multicam,
     AviWriter,
