@@ -204,7 +204,7 @@ if __name__ == "__main__":
 @cli.command(name="generate-qd-preview", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_QD_PREVIEW"})
 @click.argument("input_dir", type=click.Path(exists=True))
 @click.option("--nbatches", type=int, default=0, show_envvar=True)
-@click.option("--batch-size",type=int, default=int(2.5e2), show_envvar=True)
+@click.option("--batch-size",type=int, default=int(1e2), show_envvar=True)
 @click.option("--overlap",type=int, default=int(5), show_envvar=True)
 @click.option("--downsample", type=int, default=int(1), show_envvar=True)
 # fmt: on

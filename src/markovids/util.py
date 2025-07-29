@@ -62,8 +62,8 @@ def alternating_excitation_vid_preview(
     overlap: int=int(10),
     bground_spacing: int=int(1e3),
     downsample: int=2,
-    spatial_bp: tuple=(1.0, 4.0),
-    temporal_tau: float=0.1,
+    spatial_bp: tuple=(0., 0.),
+    temporal_tau: float=0.,
     fluo_threshold_sig: float=5.0,
     vid_montage_ncols: int=3,
     nbatches: int=1,
@@ -208,13 +208,15 @@ def alternating_excitation_vid_preview(
                     255,
                 ).astype("uint8")
 
-            for i in range(nframes):
-                fluo_frames[i] = bp_filter(
-                    fluo_frames[i], *spatial_bp
-                )  # spatial bandpass
-            fluo_frames = sos_filter(
-                fluo_frames, temporal_tau, fps
-            )  # copy off these frames for fluorescence only...
+            if (spatial_bp is not None) and (spatial_bp[0] > 0 or spatial_bp[1] > 0):
+                for i in range(nframes):
+                    fluo_frames[i] = bp_filter(
+                        fluo_frames[i], *spatial_bp
+                    )  # spatial bandpass
+            if (temporal_tau is not None) and (temporal_tau > 0):
+                fluo_frames = sos_filter(
+                    fluo_frames, temporal_tau, fps
+                )  # copy off these frames for fluorescence only...
 
             fluo_mu = fluo_frames.mean(axis=(1, 2), keepdims=True)
             fluo_std = fluo_frames.std(axis=(1, 2), keepdims=True)
