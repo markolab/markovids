@@ -70,6 +70,7 @@ def alternating_excitation_vid_preview(
     vid_montage_ncols: int=3,
     nbatches: int=1,
     burn_in: int=int(3e2),
+    use_timestamp_field="device_timestamp_ref",
     vids: list=["fluorescence", "reflectance", "merge"],
     reflect_cmap=plt.matplotlib.colormaps.get_cmap("gray"),
     fluo_cmap=plt.matplotlib.colormaps.get_cmap("turbo"),
@@ -93,20 +94,14 @@ def alternating_excitation_vid_preview(
     ]  # assumes frames are all same size
     montage_width = (width // downsample) * vid_montage_ncols
     montage_height = (height // downsample) * vid_montage_nrows
+    _, _, ts_fluo, ts_reflect = read_timestamps_multicam(ts_paths, 
+                                                        use_timestamp_field=use_timestamp_field, 
+                                                        merge_tolerance=0.001, 
+                                                        return_equal_frames=True, 
+                                                        return_full_sync_only=True,
+                                                        burn_in=300)
 
-    ts, merged_ts = read_timestamps_multicam(ts_paths, merge_tolerance=0.001)
-    use_merged_ts = (merged_ts.dropna()).iloc[
-        burn_in:
-    ]  # drop cases where we're missing frames from any camera
-
-    ts_fluo = use_merged_ts.loc[
-        np.mod(use_merged_ts.index, 2) == 0
-    ]  # fluorescence is 0,2,4,etc..
-    ts_reflect = use_merged_ts.loc[
-        np.mod(use_merged_ts.index, 2) == 1
-    ]  # reflectance is 1,3,5,...
-
-    fps = 1 / ts_fluo["system_timestamp"].diff().median()
+    fps = 1 / ts_fluo[use_timestamp_field].diff().median()
     total_frames = len(ts_fluo)  # everything is aligned to fluorescence
 
     # set up videos...
@@ -129,7 +124,7 @@ def alternating_excitation_vid_preview(
     # get background
     use_frames_bground_fluo = ts_fluo.iloc[::bground_spacing].dropna()
     read_frames_bground_fluo = {
-        _cam: use_frames_bground_fluo[_cam].astype("int32").to_list()
+        _cam: use_frames_bground_fluo[(_cam,"frame_index")].astype("int32").to_list()
         for _cam in cameras
     }
     bground_fluo = {
@@ -164,27 +159,16 @@ def alternating_excitation_vid_preview(
         right_edge = min(_left_edge + batch_size, total_frames)
 
         use_ts_fluo = ts_fluo.iloc[left_edge:right_edge]
-
-        ts_idx = ts_reflect.index.get_indexer(
-            use_ts_fluo.index, method="nearest", tolerance=2
-        )
-        ts_include = np.flatnonzero(ts_idx >= 0)  # -1 if we don't get a match
-
-        use_ts_fluo = use_ts_fluo.iloc[ts_include]
-        use_ts_reflect = ts_reflect.iloc[
-            ts_reflect.index.get_indexer(
-                use_ts_fluo.index, method="nearest", tolerance=2
-            )
-        ]
+        use_ts_reflect = ts_reflect.iloc[left_edge:right_edge]
 
         read_frames_fluo = {
-            _cam: use_ts_fluo[_cam].astype("int32").to_list() for _cam in cameras
+            _cam: use_ts_fluo[(_cam,"frame_index")].astype("int32").to_list() for _cam in cameras
         }
         raw_dat_fluo = read_frames_multicam(
             dat_paths, read_frames_fluo, load_dct, downsample=downsample
         )
         read_frames_reflect = {
-            _cam: use_ts_reflect[_cam].astype("int32").to_list() for _cam in cameras
+            _cam: use_ts_reflect[(_cam,"frame_index")].astype("int32").to_list() for _cam in cameras
         }
         raw_dat_reflect = read_frames_multicam(
             dat_paths, read_frames_reflect, load_dct, downsample=downsample
@@ -276,32 +260,38 @@ def alternating_excitation_vid_split(
     batch_size: int=int(1e2),
     nbatches: Optional[int]=None,
     save_path: str="_proc",
+    use_timestamp_field: str="device_timestamp_ref"
 ) -> None:
     # TODO: assert that all cams have same frame size
     # TODO: construct filenames from metadata!!!
     cameras = list(dat_paths.values())
-    width, height = load_dct[cameras[0]][
-        "frame_size"
-    ]  # assumes frames are all same size
+    # width, height = load_dct[cameras[0]][
+    #     "frame_size"
+    # ]  # assumes frames are all same size
 
-    ts, use_merged_ts = read_timestamps_multicam(ts_paths, merge_tolerance=0.001)
-    use_merged_ts = use_merged_ts.dropna()
-    ts_fluo = use_merged_ts.loc[
-        np.mod(use_merged_ts.index, 2) == 0
-    ]  # fluorescence is 0,2,4,etc..
-    ts_reflect = use_merged_ts.loc[
-        np.mod(use_merged_ts.index, 2) == 1
-    ]  # reflectance is 1,3,5,...
+    _, _, ts_fluo, ts_reflect = read_timestamps_multicam(ts_paths, 
+                                                        use_timestamp_field=use_timestamp_field,
+                                                        merge_tolerance=0.001, 
+                                                        return_full_sync_only=True, # only if all frames were grabbed
+                                                        return_equal_frames=True, 
+                                                        burn_in=300)
 
-    ts_idx = ts_reflect.index.get_indexer(ts_fluo.index, method="nearest", tolerance=2)
-    ts_include = np.flatnonzero(ts_idx >= 0)  # -1 if we don't get a match
-    ts_fluo = ts_fluo.iloc[ts_include]
-    ts_reflect = ts_reflect.iloc[
-        ts_reflect.index.get_indexer(ts_fluo.index, method="nearest", tolerance=2)
+    new_timestamp_order = [
+        "frame_id",
+        "frame_index",
+        "device_timestamp",
+        "system_timestamp"
     ]
+    column_order = [use_timestamp_field]
+    for _timestamp_type in new_timestamp_order:        
+        for _cam in cameras:
+            column_order += [(_cam, _timestamp_type)]
 
-    fps = 1 / ts_fluo["system_timestamp"].diff().median()
-    total_frames = len(ts_fluo)  # everything is aligned to fluorescence
+    ts_fluo = ts_fluo[column_order]
+    ts_reflect = ts_reflect[column_order]
+
+    fps = 1 / ts_fluo[use_timestamp_field].diff().median()
+    total_frames = len(ts_fluo)  
 
     # use the first filename?
     base_path = os.path.dirname(
@@ -327,6 +317,7 @@ def alternating_excitation_vid_split(
         elif load_dct[_cam]["dtype"].itemsize == 1:
             pixel_format = "gray"
         else:
+            dtype = load_dct[_cam]["dtype"]
             raise RuntimeError(f"Can't map {dtype.itemsize} bytes to pixel_format")
         fluo_writers[_cam] = AviWriter(
             os.path.join(full_save_path, f"{_cam}-fluorescence.avi"),
@@ -344,22 +335,10 @@ def alternating_excitation_vid_split(
         )
 
     with open(os.path.join(full_save_path, "timestamps-fluorescence.txt"), "w") as f:
-        # apply repr first...or just use csv
-        # f.write(
-        #     ts_fluo.reset_index().to_string(
-        #         columns=["frame_id", "system_timestamp"], header=True, index=False
-        #     )
-        # )
-        ts_fluo.reset_index().to_csv(f, columns=["frame_id", "system_timestamp"], header=True, index=False)
+        ts_fluo.to_csv(f, header=True, index=False)
 
     with open(os.path.join(full_save_path, "timestamps-reflectance.txt"), "w") as f:
-        # apply repr first...
-        # f.write(
-        #     ts_reflect.reset_index().to_string(
-        #         columns=["frame_id", "system_timestamp"], header=True, index=False
-        #     )
-        # )
-        ts_reflect.reset_index().to_csv(f, columns=["frame_id", "system_timestamp"], header=True, index=False)
+        ts_reflect.to_csv(f, header=True, index=False)
 
 
     for _left_edge in tqdm(
@@ -371,14 +350,15 @@ def alternating_excitation_vid_split(
         use_ts_fluo = ts_fluo.iloc[left_edge:right_edge]
         use_ts_reflect = ts_reflect.iloc[left_edge:right_edge]
 
+        # we ffill and bfill nans just for rendering...
         read_frames_fluo = {
-            _cam: use_ts_fluo[_cam].astype("int32").to_list() for _cam in cameras
+            _cam: use_ts_fluo[(_cam,"frame_index")].astype("int32").to_list() for _cam in cameras
         }
         raw_dat_fluo = read_frames_multicam(
             dat_paths, read_frames_fluo, load_dct
         )
         read_frames_reflect = {
-            _cam: use_ts_reflect[_cam].astype("int32").to_list() for _cam in cameras
+            _cam: use_ts_reflect[(_cam,"_frame_index")].astype("int32").to_list() for _cam in cameras
         }
         raw_dat_reflect = read_frames_multicam(
             dat_paths, read_frames_reflect, load_dct
