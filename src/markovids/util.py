@@ -360,7 +360,7 @@ def alternating_excitation_vid_split(
             dat_paths, read_frames_fluo, load_dct
         )
         read_frames_reflect = {
-            _cam: use_ts_reflect[(_cam,"_frame_index")].astype("int32").to_list() for _cam in cameras
+            _cam: use_ts_reflect[(_cam,"frame_index")].astype("int32").to_list() for _cam in cameras
         }
         raw_dat_reflect = read_frames_multicam(
             dat_paths, read_frames_reflect, load_dct
