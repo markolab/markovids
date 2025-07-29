@@ -3,7 +3,6 @@ import os
 import toml
 import numpy as np
 from markovids.util import (
-    compute_scalars,
     alternating_excitation_vid_split,
     alternating_excitation_vid_preview,
     batch,
@@ -39,7 +38,7 @@ def cli_compute_scalars(
     z_range,
 ):
     cli_params = locals()
-
+    from markovids.util import compute_scalars
     registration_dir = os.path.dirname(os.path.abspath(registration_file))
     data_dir = os.path.dirname(registration_dir)
     os.makedirs(

@@ -38,9 +38,17 @@ plt_kpoints = [
 ]
 
 noisy_keypoints = ["tail_tip", "tail_middle", "tail_base", "snout"]
-smoothing = {
+
+# we may need more aggressive filtering with cables present...
+smoothing_params = {
     "not_noisy": {"window_length": int(5), "poly_order": int(2)},
     "noisy": {"window_length": int(25), "poly_order": int(2)},
+}
+hampel_params = {
+    "window": 100,
+    "threshold": 4,
+    "replace": False,
+
 }
 interpolate = 10
 renderer_kwargs = {
@@ -60,13 +68,15 @@ def registration_pipeline(
     intrinsics_matrix=None,
     distortion_coefficients=None,
     bground_erode_px=60,
-    smoothing=smoothing,
+    smoothing_params=smoothing_params,
+    hampel_params=hampel_params,
     noisy_keypoints=noisy_keypoints,
     min_confidence=0.4,
     interpolate=10,
     z_scale=4.0,
     incl_kpoints_fit_transform=incl_kpoints_fit_transform,
     plt_kpoints=plt_kpoints,
+    mp4_max_render_frames=None,
     mp4_renderer="vedo",
     mp4_burn_in=50,
     save_file="merged_keypoints.h5",
@@ -83,9 +93,21 @@ def registration_pipeline(
     fy = intrinsics_matrix[reference_camera][1, 1]
 
     cameras = list(intrinsics_matrix.keys())
-    metadata = toml.load(os.path.join(use_data_dir, "metadata.toml"))
+    metadata_file = os.path.join(use_data_dir, "metadata.toml")
+    try:
+        metadata = toml.load(metadata_file)
+    except FileNotFoundError as e:
+        warnings.warn(f"Did not find metadata file {metadata_file}")
+        return None
+
     bground_file = os.path.join(use_data_dir, "_bground", f"{reference_camera}.tiff")
-    bground = tifffile.imread(bground_file)
+
+    try:
+        bground = tifffile.imread(bground_file)
+    except FileNotFoundError as e:
+        warnings.warn(f"Did not find background file {bground_file}")
+        return None
+
     bground_roi = depth.plane.get_floor(bground.astype("float"), dilations=0)
     kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (bground_erode_px, bground_erode_px)
@@ -221,7 +243,8 @@ def registration_pipeline(
     not_noisy_keypoints = list(set(all_keypoints).difference(noisy_keypoints))
 
     _test = pd.DataFrame(merged_data.reshape(-1, nbody_parts * 3))  # ONLY SMOOTH XYZ
-    _test = util.hampel(_test, window=100, threshold=4, replace=False)
+    if hampel_params is not None:
+        _test = util.hampel(_test, **hampel_params)
     if interpolate is not None:
         _test = _test.interpolate(
             method="linear",
@@ -230,16 +253,16 @@ def registration_pipeline(
             limit_direction="both",
             limit_area="inside",
         )
-    if smoothing is not None:
+    if smoothing_params is not None:
         for _noisy in noisy_keypoints:
             match = _test.filter(regex=_noisy, axis=1)
             _test[match] = _test.apply(
-                lambda x: util.savgol_filter_missing(x, **smoothing["noisy"])
+                lambda x: util.savgol_filter_missing(x, **smoothing_params["noisy"])
             )
         for _not_noisy in not_noisy_keypoints:
             match = _test.filter(regex=_not_noisy, axis=1)
             _test[match] = _test.apply(
-                lambda x: util.savgol_filter_missing(x, **smoothing["not_noisy"])
+                lambda x: util.savgol_filter_missing(x, **smoothing_params["not_noisy"])
             )
 
     merged_data_proc = _test.to_numpy().reshape(-1, nbody_parts, 3)
@@ -308,9 +331,20 @@ def registration_pipeline(
             data=merged_conf.astype("float32"),
             compression="gzip",
         )
-        f.create_dataset(
-            "timestamps", data=timestamps.astype("float64"), compression="gzip"
-        )
+
+        for _col in use_frames.columns:
+            f.create_dataset(
+                f"index/{_col}",
+                data=use_frames[_col].to_numpy(),
+                compression="gzip"
+            )
+
+        f.create_dataset(f"index/frame_id",
+                         data=use_frames.index.to_numpy(),
+                         compression="gzip")
+        # f.create_dataset(
+        #     "timestamps", data=timestamps.astype("float64"), compression="gzip"
+        # )
         f.create_dataset("roi", data=bground_roi, compression="gzip")
         f.create_dataset("roi_merged", data=all_roi_points_proj, compression="gzip")
 
@@ -335,8 +369,12 @@ def registration_pipeline(
     ) as f:
         toml.dump(metadata, f, encoder=toml.TomlNumpyEncoder())
 
-    arr_slice = slice(mp4_burn_in, nframes)
-    frame_ids = range(mp4_burn_in, nframes)
+    if mp4_max_render_frames is not None:
+        max_render_frames = np.minimum(mp4_max_render_frames, nframes)
+    else:
+        max_render_frames = nframes
+    arr_slice = slice(mp4_burn_in, max_render_frames)
+    frame_ids = range(mp4_burn_in, max_render_frames)
     movie_file = f"{os.path.splitext(save_file)[0]}.mp4"
     if mp4_renderer == "matplotlib":
         pcl.viz.visualize_xyz_trajectories_to_mp4(

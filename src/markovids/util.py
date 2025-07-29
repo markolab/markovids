@@ -22,13 +22,18 @@ import os
 import numpy as np
 
 default_win_kwargs =  {"window": 20, "min_periods": 1, "center": True}
-def hampel(df, scale=.6745, threshold=3, replace=True, **kwargs):
+def hampel(df, scale=.6745, threshold=3, replace=True, insert_nans=True, **kwargs):
+    use_kwargs = default_win_kwargs | kwargs
     new_df = df.copy()
-    meds = df.rolling(**default_win_kwargs).median()
+    meds = df.rolling(**use_kwargs).median()
     devs = (df - meds).abs()
-    mads = devs.rolling(**default_win_kwargs).median()
+    mads = devs.rolling(**use_kwargs).median()
     mads /= scale
     mads_dev = devs / mads
+
+    # handles edges via min_periods etc.
+    if insert_nans:
+        new_df[np.logical_or(np.isnan(meds),np.isnan(mads_dev))] = np.nan
     if replace:
         new_df[mads_dev>threshold] = meds[mads_dev>threshold]
     else:

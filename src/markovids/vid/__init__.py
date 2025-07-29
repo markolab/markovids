@@ -1,3 +1,5 @@
 # note that these are optional...
-import markovids.vid.io
-import markovids.vid.util
+from . import io
+from . import util
+# import markovids.vid.io
+# import markovids.vid.util

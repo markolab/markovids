@@ -275,8 +275,8 @@ def visualize_xyz_trajectories_vedo(
     xlim=None,
     ylim=None,
     zlim=None,
-    azimuth=30,
-    elevation=60,
+    azimuth=60,
+    elevation=30,
     frame_ids=None,
     progress_bar=True,
 ):
