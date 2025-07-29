@@ -842,7 +842,7 @@ def read_timestamps_multicam(
     fill: bool = False,
     multiplexed: bool = False,
     return_equal_frames: bool = True,
-    burn_frames: int = 300,
+    burn_in: int = 300,
     reference_camera: str = None,
     return_full_sync_only: bool = True,
     is_fluorescence_even: bool = True,
@@ -867,7 +867,7 @@ def read_timestamps_multicam(
     if reference_camera is None:
         reference_camera = cameras[0]
     for _path, _cam in path.items():
-        ts[_cam] = vid.io.read_timestamps(
+        ts[_cam] = read_timestamps(
             _path,
             fill=fill,
             fill_kwargs={"use_timestamp_field": use_timestamp_field},
