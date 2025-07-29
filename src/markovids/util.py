@@ -6,14 +6,6 @@ from markovids.vid.io import (
     AviWriter,
     MP4WriterPreview,
 )
-
-from markovids.vid.io import (
-    downsample_frames,
-    read_timestamps_multicam,
-    read_frames_multicam,
-    get_bground,
-    MP4WriterPreview,
-)
 from markovids.vid.util import bp_filter, sos_filter, video_montage
 from tqdm.auto import tqdm
 
@@ -104,6 +96,8 @@ def alternating_excitation_vid_preview(
                                                         merge_tolerance=0.001, 
                                                         return_equal_frames=True, 
                                                         return_full_sync_only=True,
+                                                        multiplexed=True,
+                                                        fill=False,
                                                         burn_in=300)
 
     fps = 1 / ts_fluo[use_timestamp_field].diff().median()
@@ -275,10 +269,12 @@ def alternating_excitation_vid_split(
     # ]  # assumes frames are all same size
 
     _, _, ts_fluo, ts_reflect = read_timestamps_multicam(ts_paths, 
-                                                        use_timestamp_field=use_timestamp_field,
+                                                        use_timestamp_field=use_timestamp_field, 
                                                         merge_tolerance=0.001, 
-                                                        return_full_sync_only=True, # only if all frames were grabbed
                                                         return_equal_frames=True, 
+                                                        return_full_sync_only=True,
+                                                        multiplexed=True,
+                                                        fill=False,
                                                         burn_in=300)
 
     new_timestamp_order = [
