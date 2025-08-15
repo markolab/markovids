@@ -114,6 +114,12 @@ def bundle_adjust_rigid_fixed_structure(
     rv_C0 = Rotation.from_matrix(R_C0).as_rotvec()
     x0 = np.hstack([rv_B0, t_B0, rv_C0, t_C0])
 
+    ######
+    from scipy.optimize._lsq.common import in_bounds
+
+    lb, ub = kwargs.get("bounds", (-np.inf * np.ones_like(x0), np.inf * np.ones_like(x0)))
+    ######
+
     result = least_squares(
         residuals_rigid,
         x0,

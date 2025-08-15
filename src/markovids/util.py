@@ -53,7 +53,7 @@ def next_even_number(x):
 def prev_even_number(x):
     return (np.floor(x / 2) * 2).astype("int")
 
-
+import matplotlib.cm as cm
 def alternating_excitation_vid_preview(
     dat_paths: dict,
     ts_paths: dict,
@@ -70,9 +70,9 @@ def alternating_excitation_vid_preview(
     burn_in: int=int(3e2),
     use_timestamp_field="device_timestamp_ref",
     vids: list=["fluorescence", "reflectance", "merge"],
-    reflect_cmap=plt.matplotlib.colormaps.get_cmap("gray"),
-    fluo_cmap=plt.matplotlib.colormaps.get_cmap("turbo"),
-    fluo_only_cmap=plt.matplotlib.colormaps.get_cmap("magma"),
+    reflect_cmap=cm.get_cmap("gray"),
+    fluo_cmap=cm.get_cmap("turbo"),
+    fluo_only_cmap=cm.get_cmap("magma"),
     reflect_norm=plt.matplotlib.colors.Normalize(vmin=0, vmax=255),
     fluo_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=40),  # in z units
     fluo_only_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=30),  # in z units
