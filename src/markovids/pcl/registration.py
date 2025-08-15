@@ -102,13 +102,6 @@ def bundle_adjust_rigid_fixed_structure(
 ):
     N = points_A.shape[0]
 
-    # print("A")
-    # print(points_A)
-    # print("B")
-    # print((points_B))
-    # print("C")
-    # print((points_C))
-
     if weights_B is None:
         weights_B = np.ones(N)
     if weights_C is None:
@@ -125,11 +118,6 @@ def bundle_adjust_rigid_fixed_structure(
     from scipy.optimize._lsq.common import in_bounds
 
     lb, ub = kwargs.get("bounds", (-np.inf * np.ones_like(x0), np.inf * np.ones_like(x0)))
-
-    # print("x0:", x0)
-    # print("Lower bounds:", lb)
-    # print("Upper bounds:", ub)
-    # print("In bounds?:", in_bounds(x0, *kwargs.get("bounds", (lb, ub))))
     ######
 
     result = least_squares(

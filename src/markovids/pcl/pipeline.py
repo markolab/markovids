@@ -100,6 +100,7 @@ def registration_pipeline(
             "Need intrinsics and distortion_coefficients dictionaries to continue"
         )
 
+    # Camera intrinsics
     cx = intrinsics_matrix[reference_camera][0, 2]
     cy = intrinsics_matrix[reference_camera][1, 2]
     fx = intrinsics_matrix[reference_camera][0, 0]
@@ -109,12 +110,14 @@ def registration_pipeline(
 
     metadata_path = use_data_dir if meta_path is None else meta_path
     metadata_file = os.path.join(metadata_path, "metadata.toml")
+
     try:
         metadata = toml.load(metadata_file)
     except FileNotFoundError as e:
         warnings.warn(f"Did not find metadata file {metadata_file}")
         return None
 
+    # Load background to compute the floor plane
     bground_file = os.path.join(use_data_dir, "_bground", f"{reference_camera}.tiff")
 
     try:
@@ -124,14 +127,18 @@ def registration_pipeline(
         return None
 
     bground_roi = depth.plane.get_floor(bground.astype("float"), dilations=0)
+
     kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (bground_erode_px, bground_erode_px)
     )  # erode walls, etc.
     use_bground_roi = cv2.erode(
         bground_roi, kernel
     )  # erode so we only get a big chunk of the middle
+
     floor_distance = np.median(bground[use_bground_roi])
 
+
+    # Load 3D keypoints, computed previously
     kpoints_metadata = toml.load(
         os.path.join(use_data_dir, kpoints_save_dir, f"{cameras[0]}.toml")
     )
@@ -139,7 +146,6 @@ def registration_pipeline(
 
     ts_paths = {os.path.join(use_data_dir, f"{_cam}.txt"): _cam for _cam in cameras}
     ts, merged_ts = vid.io.read_timestamps_multicam(ts_paths, merge_tolerance=0.0035)
-
 
     kpoints_dat = {}
     for _cam in cameras:
@@ -151,18 +157,22 @@ def registration_pipeline(
     # only include fully sync'd data...
     use_frames = merged_ts.dropna().astype(np.int)
 
+    # syncing...
     for _cam in cameras:
         kpoints_dat[_cam] = kpoints_dat[_cam][use_frames[_cam]]
 
+    # Only include subset of nodes for transform
     incl_kpoints_idx = [
         kpoints_metadata["node_names"].index(_incl)
         for _incl in incl_kpoints_fit_transform
     ]
+    
     use_points = []
     use_points_cam = [reference_camera]
     use_points.append(
         kpoints_dat[reference_camera][:, incl_kpoints_idx, :].reshape(-1, 4)
     )
+
     for _cam in cameras:
         if _cam == reference_camera:
             continue
@@ -198,6 +208,7 @@ def registration_pipeline(
 
     use_dat = copy.deepcopy(kpoints_dat)
 
+    # weight points based on proximity to edges
     for _cam in cameras:
         xy = use_dat[_cam][..., [0, 1, 3]].reshape(-1, 3)
         edge_weighting = pcl.kpoints.edge_weight_map(xy[:, :2], edge_margin=100)
@@ -205,6 +216,7 @@ def registration_pipeline(
         xy = xy.reshape(-1, nbody_parts, 3)
         use_dat[_cam][..., 3] = xy[..., 2]
 
+    # Project points into common space, drop nans
     proj_points = np.full((len(cameras), nframes, nbody_parts, 4), fill_value=np.nan)
     for i, _cam in enumerate(cameras):
         proj_points[i] = use_dat[_cam].copy()
@@ -216,7 +228,7 @@ def registration_pipeline(
             rem = np.isnan(proj_points[i][_frame]).any(axis=-1)
             proj_points[i][_frame][rem, :] = np.nan
 
-    # per-frame adjustment
+    # per-frame adjustment : bundle adjustment assumes constant rigid transform, but some errors in alignment may occur
     for i, _cam in enumerate(cameras):
         if i == reference_camera:
             continue
@@ -225,11 +237,12 @@ def registration_pipeline(
         for _frame in range(nframes):
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
-                bias = np.nanmean(use_points[_frame] - ref_points[_frame], axis=0)[:3]
+                bias = np.nanmean(use_points[_frame] - ref_points[_frame], axis=0)[:3] # some points may be off
             # any nans should be replaced by most recent bias term...
             bias[np.isnan(bias)] = 0
             proj_points[i][_frame, :, :3] -= bias[None, :]
 
+    # merge data via a weighted average
     merge_method = "weighted"
     merged_data = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
     merged_conf = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
@@ -287,7 +300,7 @@ def registration_pipeline(
         kpoints_metadata["node_names"].index(_incl) for _incl in plt_kpoints
     ]
 
-    # save smoothed and raw...
+    # save smoothed and raw after projecting into world coordinates (mm)...
     merged_data_proj_smooth = pcl.io.project_world_coordinates(
         merged_data_proc.reshape(-1, 3),
         floor_distance=floor_distance,
@@ -309,6 +322,7 @@ def registration_pipeline(
 
     all_bgrounds = {}
 
+    # region of interest and backgroun files
     for _cam in cameras:
         bground_file = os.path.join(use_data_dir, "_bground", f"{_cam}.tiff")
         bground = tifffile.imread(bground_file)
@@ -360,9 +374,10 @@ def registration_pipeline(
         f.create_dataset(f"index/frame_id",
                          data=use_frames.index.to_numpy(),
                          compression="gzip")
-        # f.create_dataset(
-        #     "timestamps", data=timestamps.astype("float64"), compression="gzip"
-        # )
+        
+        f.create_dataset(
+            "timestamps", data=timestamps.astype("float64"), compression="gzip"
+        )
         f.create_dataset("roi", data=bground_roi, compression="gzip")
         f.create_dataset("roi_merged", data=all_roi_points_proj, compression="gzip")
 
