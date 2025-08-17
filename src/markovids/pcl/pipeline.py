@@ -12,6 +12,32 @@ from markovids import depth, vid, pcl, util
 
 from pathlib import Path
 
+#TODO move out
+
+def apply_final_smoothing(keypoints, keypoint_names, window_length=5, polyorder=3, fps=100):
+    """Light final smoothing pass with Savitzky-Golay filter"""
+    smoothed = keypoints.copy()
+
+    for kp_idx, kp_name in enumerate(keypoint_names):
+        # Adaptive parameters based on keypoint
+        if "tail_tip" in kp_name or "snout" in kp_name:
+            _window_length = window_length   # ~50ms at 100fps
+            _polyorder = polyorder - 1
+        else:
+            _window_length = window_length + 2  # ~70ms at 100fps
+            _polyorder = polyorder
+
+        for dim in range(3):
+            trajectory = keypoints[:, kp_idx, dim]
+            if not np.all(np.isnan(trajectory)):
+                # Only smooth non-NaN portions
+                smoothed[:, kp_idx, dim] = savgol_filter(
+                    trajectory, _window_length, _polyorder, mode="nearest"  # Good edge handling
+                )
+
+    return smoothed
+
+
 # defaults...
 reference_camera = "Lucid Vision Labs-HTP003S-001-224500508"
 incl_kpoints_fit_transform = [
@@ -62,6 +88,23 @@ renderer_kwargs = {
     # "azimuth": 65,
 }
 
+skeleton = [
+    ("tail_tip", "tail_middle"),
+    ("tail_middle", "tail_base"),
+    # ("tail_base", "back_bottom"),
+    ("back_middle_lower", "back_middle_upper"),
+    ("back_middle_upper", "back_top"),
+    ("left_ear", "right_ear"),
+    ("left_shoulder", "right_shoulder"),
+    ("left_hip", "right_hip"),
+    ("back_top", "left_shoulder"),
+    ("back_top", "right_shoulder"),
+    ("back_bottom", "left_hip"),
+    ("back_bottom", "right_hip"),
+]
+
+
+fps=100
 
 def registration_pipeline(
     use_data_dir,
@@ -83,7 +126,8 @@ def registration_pipeline(
     mp4_burn_in=50,
     save_file="merged_keypoints.h5",
     alt_save_dir=None,
-    meta_path = None
+    meta_path = None,
+    cable=False
 ):
 
     if alt_save_dir:
@@ -99,6 +143,74 @@ def registration_pipeline(
         raise RuntimeError(
             "Need intrinsics and distortion_coefficients dictionaries to continue"
         )
+
+    postprocessing_params = {}
+
+    if cable:
+        postprocessing_params["temporal_regularization"] = {
+            "fps": fps,
+            "lambda_jerk": 3e-8,
+            "lambda_snap": 0,
+            "lambda_velocity": 0,
+            "lambda_accel": 1e-8,
+            "max_gap_fill": 30,
+        }
+        postprocessing_params["bone_length_regularization"] = {
+            "correction_rate": 0.75,  # with cable
+            "iterations": 10,
+            "violation_threshold": 1.5,
+        }
+        postprocessing_params["pca"] = {
+            "n_components": 5,  # with cable
+            "n_iterations": 30
+        }
+        postprocessing_params["align"] = {
+            "exclude_from_center": ["snout", "tail_base", "tail_middle", "tail_tip", "left_ear", "right_ear"],
+            "use_median_centering": True,
+        }
+        postprocessing_params["align_compute"] = {
+            "alignment_window": 11,
+            "smooth_alignment": True
+        }
+        postprocessing_params["post_align_hampel"] = {
+            "window_size": 7,
+            "n_sigmas": 3
+        }
+        postprocessing_params["post_align_imputed_smoothing"] = {
+            "sigma": 2.5,
+            "medfilt_kernel": 5
+        }
+        postprocessing_params["post_align_sgolay"] = {
+            "window_length": 7,
+            "polyorder": 3,
+        }
+    else:
+        postprocessing_params["temporal_regularization"] = {
+            "fps": fps,
+            "lambda_jerk": 1e-8,
+            "lambda_snap": 0,
+            "lambda_velocity": 0,
+            "lambda_accel": 1e-9,
+            "max_gap_fill": 30,
+        }
+        postprocessing_params["bone_length_regularization"] = {
+            "correction_rate": 0.5,  # with cable
+            "iterations": 10,
+            "violation_threshold": 1.5,
+        }
+        postprocessing_params["pca"] = {"n_components": 6, "n_iterations": 30}  # with cable
+        postprocessing_params["align"] = {
+            "exclude_from_center": ["snout", "tail_base", "tail_middle", "tail_tip", "left_ear", "right_ear"],
+            "use_median_centering": True,
+        }
+        postprocessing_params["align_compute"] = {"alignment_window": 11, "smooth_alignment": True}
+        postprocessing_params["post_align_hampel"] = {"window_size": 7, "n_sigmas": 3}
+        postprocessing_params["post_align_imputed_smoothing"] = {"sigma": 2.5, "medfilt_kernel": 5}
+        postprocessing_params["post_align_sgolay"] = {
+            "window_length": 5,
+            "polyorder": 3,
+        }
+
 
     # Camera intrinsics
     cx = intrinsics_matrix[reference_camera][0, 2]
@@ -142,6 +254,7 @@ def registration_pipeline(
     kpoints_metadata = toml.load(
         os.path.join(use_data_dir, kpoints_save_dir, f"{cameras[0]}.toml")
     )
+
     nbody_parts = len(kpoints_metadata["node_names"])
 
     ts_paths = {os.path.join(use_data_dir, f"{_cam}.txt"): _cam for _cam in cameras}
@@ -272,30 +385,99 @@ def registration_pipeline(
     all_keypoints = kpoints_metadata["node_names"]
     not_noisy_keypoints = list(set(all_keypoints).difference(noisy_keypoints))
 
-    _test = pd.DataFrame(merged_data.reshape(-1, nbody_parts * 3))  # ONLY SMOOTH XYZ
-    if hampel_params is not None:
-        _test = util.hampel(_test, **hampel_params)
-    if interpolate is not None:
-        _test = _test.interpolate(
-            method="linear",
-            limit=interpolate,
-            axis=0,
-            limit_direction="both",
-            limit_area="inside",
-        )
-    if smoothing_params is not None:
-        for _noisy in noisy_keypoints:
-            match = _test.filter(regex=_noisy, axis=1)
-            _test[match] = _test.apply(
-                lambda x: util.savgol_filter_missing(x, **smoothing_params["noisy"])
-            )
-        for _not_noisy in not_noisy_keypoints:
-            match = _test.filter(regex=_not_noisy, axis=1)
-            _test[match] = _test.apply(
-                lambda x: util.savgol_filter_missing(x, **smoothing_params["not_noisy"])
-            )
+    '''
+        Begin additional post-processing
+    '''
+    # merged_data will be the post-processed
 
-    merged_data_proc = _test.to_numpy().reshape(-1, nbody_parts, 3)
+    # NO SNOUT!
+    node_mapping = kpoints_metadata["node_mapping"]
+    new_node_mapping = {k: v for k, v in node_mapping.items() if ("snout" not in k)}
+    new_node_mapping = {k: i for i, k in enumerate(new_node_mapping.keys())}
+
+    kp_list = list(new_node_mapping.keys())
+
+
+    smoothed_kpoints, smoothed_conf = pcl.kpoints.smooth_all_keypoints(merged_data, merged_conf,
+                                                                            **postprocessing_params["temporal_regularization"])
+    bone_constraints = pcl.kpoints.create_bone_constraints_from_data(
+        smoothed_kpoints,
+        list(new_node_mapping.keys()),
+        skeleton,
+        smoothed_conf,
+    )
+
+    optimizer = pcl.kpoints.BoneConstraintOptimizer(
+        bone_constraints, **postprocessing_params["bone_length_regularization"]
+    )
+    bone_constrained_smoothed_kpoints, bone_constrained_smoothed_conf = optimizer.process_sequence(
+        smoothed_kpoints, smoothed_conf
+    )
+
+
+    # PCA IMPUTATION: align poses according to 2d center and orientation, use PCA to fill missing data...
+    nframes, nkeypoints, ndims = merged_data.shape
+    aligner = pcl.kpoints.PoseAligner(keypoint_names=kp_list, **postprocessing_params["align"])
+    pca_imputer = pcl.kpoints.PCAImputer(**postprocessing_params["pca"])
+
+    # Compute alignment
+    centroids, angles = aligner.compute_alignment(
+        bone_constrained_smoothed_kpoints, **postprocessing_params["align_compute"]
+    )
+
+    # Transform to aligned space
+    aligned_kpoints = aligner.transform(bone_constrained_smoothed_kpoints, centroids, angles)
+
+    # Impute missing values
+    imputed_aligned_kpoints = pca_imputer.impute(aligned_kpoints, aligner)
+
+    # Transform back to original space
+    imputed_kpoints = aligner.inverse_transform(imputed_aligned_kpoints, centroids, angles)
+    was_imputed = np.isnan(bone_constrained_smoothed_kpoints).any(axis=-1)
+    imputed_conf = pcl.kpoints.compute_imputation_confidence(was_imputed)
+    imputed_kpoints_filtered, outlier_mask = pcl.kpoints.hampel_filter(
+        imputed_kpoints, was_imputed, **postprocessing_params["post_align_hampel"]
+    )
+    smoothed_interpolated_kpoints = pcl.kpoints.simple_smooth_imputed(
+        imputed_kpoints_filtered, was_imputed, **postprocessing_params["post_align_imputed_smoothing"]
+    )
+
+    # apply bone constraints one more time after imputation
+    optimizer = pcl.kpoints.BoneConstraintOptimizer(bone_constraints, **postprocessing_params["bone_length_regularization"])
+    final_smoothed, final_conf = optimizer.process_sequence(smoothed_interpolated_kpoints, imputed_conf)
+
+    # final smoothing
+    final_smoothed = apply_final_smoothing(final_smoothed, kp_list, **postprocessing_params["post_align_sgolay"])
+
+    '''
+        End additional post-processing
+        TODO once confirm correct output, clean up this code
+    '''
+
+    # _test = pd.DataFrame(merged_data.reshape(-1, nbody_parts * 3))  # ONLY SMOOTH XYZ
+    # if hampel_params is not None:
+    #     _test = util.hampel(_test, **hampel_params)
+    # if interpolate is not None:
+    #     _test = _test.interpolate(
+    #         method="linear",
+    #         limit=interpolate,
+    #         axis=0,
+    #         limit_direction="both",
+    #         limit_area="inside",
+    #     )
+    # if smoothing_params is not None:
+    #     for _noisy in noisy_keypoints:
+    #         match = _test.filter(regex=_noisy, axis=1)
+    #         _test[match] = _test.apply(
+    #             lambda x: util.savgol_filter_missing(x, **smoothing_params["noisy"])
+    #         )
+    #     for _not_noisy in not_noisy_keypoints:
+    #         match = _test.filter(regex=_not_noisy, axis=1)
+    #         _test[match] = _test.apply(
+    #             lambda x: util.savgol_filter_missing(x, **smoothing_params["not_noisy"])
+    #         )
+
+    merged_data_proc = final_smoothed # _test.to_numpy().reshape(-1, nbody_parts, 3)
     plt_kpoints_idx = [
         kpoints_metadata["node_names"].index(_incl) for _incl in plt_kpoints
     ]
@@ -310,6 +492,7 @@ def registration_pipeline(
         fy=fy,
         z_scale=z_scale,
     ).reshape(-1, nbody_parts, 3)
+
     merged_data_proj_raw = pcl.io.project_world_coordinates(
         merged_data.reshape(-1, 3),
         floor_distance=floor_distance,
@@ -322,7 +505,7 @@ def registration_pipeline(
 
     all_bgrounds = {}
 
-    # region of interest and backgroun files
+    # region of interest and background files
     for _cam in cameras:
         bground_file = os.path.join(use_data_dir, "_bground", f"{_cam}.tiff")
         bground = tifffile.imread(bground_file)
