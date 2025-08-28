@@ -550,7 +550,7 @@ def sync_depth_videos(
     avi_writers = {}
     bgrounds = {}
     for _cam, _file in tqdm(zip(cameras, avi_paths), total=len(cameras)):
-        bgrounds[_cam] = get_bground(_file, **bground_kwargs)
+        bgrounds[_cam] = compute_bground(_file, **bground_kwargs)
         if undistort:
             bgrounds[_cam] = cv2.undistort(
                 bgrounds[_cam], intrinsics_matrix[_cam], distortion_coeffs[_cam]
