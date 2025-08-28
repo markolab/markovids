@@ -908,6 +908,11 @@ def read_timestamps_multicam(
             ts.values(),
         )
         merged_ts.index = list(ts.values())[0].index
+        if return_full_sync_only:
+            print(f"Dropping from timestamps: {merged_ts.isnull().any(axis=1).sum()} (frames)")
+            print(f"Dropping from timestamps: {merged_ts.isnull().any(axis=1).mean() * 1e2:.3f} (%)")
+            print(f"Average FPS: {1 / merged_ts[use_timestamp_field].diff().mean():.3f}")
+            merged_ts = merged_ts.dropna()
         return ts, merged_ts
     else:
         # fluo is EVEN, reflect is ODD
