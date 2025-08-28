@@ -296,5 +296,111 @@ def cli_split_qd_vids(
     )
 
 
+
+# fmt: off
+@cli.command(name="sync-depth-video", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_DEPTH"})
+@click.argument("data_dir", type=click.Path(exists=True))
+@click.option("--batch-size", type=int, default=500, show_envvar=True)
+@click.option("--intrinsics-file", type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
+@click.option("--save-dir", type=str, default="_proc", show_envvar=True, help="Output directory name")
+@click.option("--undistort/--no-undistort", default=True, show_envvar=True, help="Apply lens undistortion")
+@click.option("--preview-inpaint/--no-preview-inpaint", default=True, show_envvar=True, help="Fill holes in preview video")
+# timestamp_kwargs options
+@click.option("--ts-merge-tolerance", type=float, default=0.003, show_envvar=True, help="Timestamp merge tolerance in seconds")
+@click.option("--ts-multiplexed/--ts-not-multiplexed", default=False, show_envvar=True, help="Multiplexed timestamps")
+@click.option("--ts-burn-in", type=int, default=500, show_envvar=True, help="Number of burn-in frames to skip")
+@click.option("--ts-return-full-sync-only/--ts-allow-partial-sync", default=True, show_envvar=True, help="Only return fully synchronized frames")
+@click.option("--ts-timestamp-field", type=str, default="device_timestamp_ref", show_envvar=True, help="Timestamp field to use for synchronization")
+# preview_kwargs options  
+@click.option("--preview-crf", type=int, default=26, show_envvar=True, help="Video compression quality (lower=better)")
+@click.option("--preview-vmin", type=float, default=5, show_envvar=True, help="Minimum value for preview colormap")
+@click.option("--preview-vmax", type=float, default=90, show_envvar=True, help="Maximum value for preview colormap")
+@click.option("--preview-cmap", type=str, default="viridis", show_envvar=True, help="Colormap for preview video")
+@click.option("--preview-ncols", type=int, default=2, show_envvar=True, help="Number of columns in preview montage")
+# bground_kwargs options
+@click.option("--bground-step-size", type=int, default=1500, show_envvar=True, help="Frame step size for background calculation")
+@click.option("--bground-save-dir", type=str, default="_bground", show_envvar=True, help="Directory to save background images")
+@click.option("--bground-threads", type=int, default=5, show_envvar=True, help="Number of threads for background reader")
+@click.option("--bground-force/--no-bground-force", default=False, show_envvar=True, help="Force recompute background")
+# other options
+@click.option("--reader-threads", type=int, default=4, show_envvar=True, help="Number of threads for video reader")
+# fmt: on
+def cli_sync_depth_video(
+    data_dir,
+    batch_size,
+    intrinsics_file,
+    save_dir,
+    undistort,
+    preview_inpaint,
+    ts_merge_tolerance,
+    ts_multiplexed,
+    ts_burn_in,
+    ts_return_full_sync_only,
+    ts_timestamp_field,
+    preview_crf,
+    preview_vmin,
+    preview_vmax,
+    preview_cmap,
+    preview_ncols,
+    bground_step_size,
+    bground_save_dir,
+    bground_threads,
+    bground_force,
+    reader_threads,
+):
+    from markovids.util import sync_depth_videos
+    from markovids.vid.io import format_intrinsics
+    import toml
+    import numpy as np
+
+    cli_params = locals()
+
+    intrinsics_matrix, distortion_coeffs = format_intrinsics(toml.load(intrinsics_file))
+
+    # Build timestamp_kwargs from CLI options
+    timestamp_kwargs = {
+        "merge_tolerance": ts_merge_tolerance,
+        "multiplexed": ts_multiplexed,
+        "burn_in": ts_burn_in,
+        "return_full_sync_only": ts_return_full_sync_only,
+        "use_timestamp_field": ts_timestamp_field,
+    }
+
+    # Build preview_kwargs from CLI options
+    preview_kwargs = {
+        "crf": preview_crf,
+        "vmin": preview_vmin,
+        "vmax": preview_vmax,
+        "cmap": preview_cmap,
+        "ncols": preview_ncols,
+    }
+
+    # Build bground_kwargs from CLI options
+    bground_kwargs = {
+        "step_size": bground_step_size,
+        "agg_func": np.median,  # Fixed to median for now
+        "reader_kwargs": {"threads": bground_threads},
+        "save_dir": bground_save_dir,
+        "force": bground_force,
+    }
+
+    # Build reader_kwargs
+    reader_kwargs = {"threads": reader_threads}
+
+    sync_depth_videos(
+        data_dir,
+        save_dir=save_dir,
+        timestamp_kwargs=timestamp_kwargs,
+        undistort=undistort,
+        intrinsics_matrix=intrinsics_matrix,
+        distortion_coeffs=distortion_coeffs,
+        preview_kwargs=preview_kwargs,
+        bground_kwargs=bground_kwargs,
+        preview_inpaint=preview_inpaint,
+        reader_kwargs=reader_kwargs,
+        batch_size=batch_size,
+    )
+
+
 if __name__ == "__main__":
     cli()

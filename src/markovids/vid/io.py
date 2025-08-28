@@ -56,7 +56,7 @@ class MP4WriterPreview:
         self.frame_size = (width, height)
         self.pipe = None
         self.crf = crf
-        self.cmap = plt.get_cmap(cmap)  # only used for intensity images
+        self.cmap = get_cv2_colormap(cmap)  # only used for intensity images
         self.text_pos = text_pos
         self.font = font
 
@@ -998,19 +998,62 @@ def inscribe_text(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, text_pos=(30, 30))
     )
 
 
-def pseudocolor_frames(frames, vmin=0, vmax=100, cmap=plt.get_cmap("turbo")):
-    nframes, height, width = frames.shape
-    pseudo_ims = np.zeros(
-        (nframes, height, width, 3), dtype="uint8"
-    )
-    for i, _img in enumerate(frames):
-        disp_img = _img.copy().astype("float32")
-        disp_img = (disp_img - vmin) / (vmax - vmin)
-        disp_img[disp_img < 0] = 0
-        disp_img[disp_img > 1] = 1
-        disp_img = np.delete(cmap(disp_img), 3, 2) * 255
-        pseudo_ims[i] = disp_img
-    return pseudo_ims
+def pseudocolor_frames(
+    stack: np.ndarray, cmap: int = cv2.COLORMAP_TURBO, vmin: float | None = None, vmax: float | None = None
+) -> np.ndarray:
+    """
+    Apply an OpenCV colormap to a stack of images with explicit vmin/vmax scaling.
+
+    Parameters
+    ----------
+    stack : np.ndarray
+        Grayscale image(s), shape (H, W) or (N, H, W).
+        dtype can be uint8/uint16/float.
+    cmap : int
+        OpenCV colormap constant (e.g., cv2.COLORMAP_VIRIDIS).
+    vmin, vmax : float or None
+        Intensity range to map to [0, 255].
+        If None, defaults to stack.min() / stack.max().
+
+    Returns
+    -------
+    np.ndarray
+        Colored images, shape (H, W, 3) or (N, H, W, 3), dtype=uint8 (BGR).
+    """
+    if stack.ndim == 2:
+        stack = stack[None, ...]  # add frame axis
+
+    stack = np.asarray(stack)
+
+    # Pick scaling range
+    if vmin is None:
+        vmin = float(stack.min())
+    if vmax is None:
+        vmax = float(stack.max())
+
+    # Normalize to [0, 255]
+    norm = (stack.astype(np.float32) - vmin) / (vmax - vmin + 1e-12)
+    norm = np.clip(norm, 0, 1)
+    norm = (norm * 255).astype(np.uint8)
+
+    # Apply colormap frame by frame
+    colored = [cv2.applyColorMap(frame, cmap) for frame in norm]
+    return colored[0] if len(colored) == 1 else np.stack(colored, axis=0)[..., ::-1]
+
+
+# def pseudocolor_frames(frames, vmin=0, vmax=100, cmap=plt.get_cmap("turbo")):
+#     nframes, height, width = frames.shape
+#     pseudo_ims = np.zeros(
+#         (nframes, height, width, 3), dtype="uint8"
+#     )
+#     for i, _img in enumerate(frames):
+#         disp_img = _img.copy().astype("float32")
+#         disp_img = (disp_img - vmin) / (vmax - vmin)
+#         disp_img[disp_img < 0] = 0
+#         disp_img[disp_img > 1] = 1
+#         disp_img = np.delete(cmap(disp_img), 3, 2) * 255
+#         pseudo_ims[i] = disp_img
+#     return pseudo_ims
 
 
 def mark_frame(frame, marker_color, marker_size):
@@ -1111,3 +1154,60 @@ def format_intrinsics(intrinsics):
         )
         distortion_coeffs[k] = np.array([v["k1"], v["k2"], v["p1"], v["p2"], v["k3"]])
     return intrinsic_matrix, distortion_coeffs
+
+
+def get_cv2_colormap(colormap_name) -> int:
+    """
+    Get OpenCV colormap constant from string name or pass through integer.
+    
+    Parameters
+    ----------
+    colormap_name : str or int
+        Name of colormap (case-insensitive) or existing cv2 colormap constant.
+        Supported names: "jet", "turbo", "viridis", "plasma", "inferno", "magma",
+        "hot", "hsv", "cool", "spring", "summer", "autumn", "winter",
+        "bone", "copper", "flag", "prism", "ocean", "rainbow", "parula"
+    
+    Returns
+    -------
+    int
+        OpenCV colormap constant
+        
+    Raises
+    ------
+    ValueError
+        If colormap name is not recognized
+    """
+    if isinstance(colormap_name, int):
+        return colormap_name
+        
+    colormap_name = colormap_name.upper()
+    
+    colormap_mapping = {
+        "JET": cv2.COLORMAP_JET,
+        "TURBO": cv2.COLORMAP_TURBO,
+        "VIRIDIS": cv2.COLORMAP_VIRIDIS,
+        "PLASMA": cv2.COLORMAP_PLASMA,
+        "INFERNO": cv2.COLORMAP_INFERNO,
+        "MAGMA": cv2.COLORMAP_MAGMA,
+        "HOT": cv2.COLORMAP_HOT,
+        "HSV": cv2.COLORMAP_HSV,
+        "COOL": cv2.COLORMAP_COOL,
+        "SPRING": cv2.COLORMAP_SPRING,
+        "SUMMER": cv2.COLORMAP_SUMMER,
+        "AUTUMN": cv2.COLORMAP_AUTUMN,
+        "WINTER": cv2.COLORMAP_WINTER,
+        "BONE": cv2.COLORMAP_BONE,
+        "COPPER": cv2.COLORMAP_COPPER,
+        "FLAG": cv2.COLORMAP_FLAG,
+        "PRISM": cv2.COLORMAP_PRISM,
+        "OCEAN": cv2.COLORMAP_OCEAN,
+        "RAINBOW": cv2.COLORMAP_RAINBOW,
+        "PARULA": cv2.COLORMAP_PARULA,
+    }
+    
+    if colormap_name not in colormap_mapping:
+        available_maps = ", ".join(sorted(colormap_mapping.keys()))
+        raise ValueError(f"Unknown colormap '{colormap_name}'. Available: {available_maps}")
+    
+    return colormap_mapping[colormap_name]
