@@ -521,7 +521,7 @@ def sync_depth_videos(
     else:
         print("Will undistort data")
 
-    preview_ncols = preview_kwargs.pop("ncols")
+    preview_ncols = use_preview_kwargs.pop("ncols")
     preview_nrows = np.ceil(len(cameras) / preview_ncols)
 
     # need paths to timestamps and avi
