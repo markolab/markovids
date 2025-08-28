@@ -355,7 +355,13 @@ def cli_sync_depth_video(
 
     cli_params = locals()
 
-    intrinsics_matrix, distortion_coeffs = format_intrinsics(toml.load(intrinsics_file))
+    if os.path.exists(intrinsics_file):
+        print(f"Loading intrinsics file {intrinsics_file}")
+        intrinsics_matrix, distortion_coeffs = format_intrinsics(toml.load(intrinsics_file))
+    else:
+        print("No intrinsics provided, skipping undistortion...")
+        intrinsics_matrix = None
+        distortion_coeffs = None
 
     # Build timestamp_kwargs from CLI options
     timestamp_kwargs = {
@@ -399,6 +405,7 @@ def cli_sync_depth_video(
         preview_inpaint=preview_inpaint,
         reader_kwargs=reader_kwargs,
         batch_size=batch_size,
+
     )
 
 
