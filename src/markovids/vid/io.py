@@ -56,7 +56,7 @@ class MP4WriterPreview:
         self.frame_size = (width, height)
         self.pipe = None
         self.crf = crf
-        self.cmap = plt.get_cmap(cmap)  # only used for intensity images
+        self.cmap = get_cv2_colormap(cmap)  # only used for intensity images
         self.text_pos = text_pos
         self.font = font
 
@@ -799,35 +799,190 @@ def read_timestamps(path, tick_period=1e9, fill=False, fill_kwargs={}):
     return df
 
 
+# TODO: add frame_id match here, at high rates the system timestamp
+# will become unreliable...
+# TODO: make fill false here, we're just adding and dropping nans anyway...
+# def read_timestamps_multicam(
+#     path: dict, use_timestamp_field: str = "system_timestamp", merge_tolerance=0.0035, fill=True
+# ):
+#     from functools import reduce
+
+#     ts = {}
+#     for _path, _cam in path.items():
+#         # occassionally the filling logic will lead to weird
+#         # discontinuities, so sort timestamps after this...
+#         # alternatively, interpolate through other means...
+#         ts[_cam] = read_timestamps(
+#             _path,
+#             fill=fill,
+#             fill_kwargs={"use_timestamp_field": use_timestamp_field},
+#         ).rename(columns={"frame_index": _cam}).sort_values(use_timestamp_field)
+
+#     merged_ts = reduce(
+#         lambda left, right: pd.merge_asof(
+#             left,
+#             right,
+#             tolerance=merge_tolerance,
+#             on=use_timestamp_field,
+#             direction="nearest",
+#         ),
+#         ts.values(),
+#     )
+#     merged_ts.index = list(ts.values())[0].index
+
+#     return ts, merged_ts
+
+
+# TODO: flag for pushing fluorescence to next reflectance if needed...
 def read_timestamps_multicam(
-    path: dict, use_timestamp_field: str = "system_timestamp", merge_tolerance=0.0035, fill=True
+    path: dict,
+    use_timestamp_field: str = "device_timestamp_ref",
+    capture_number: str = "frame_id",
+    merge_tolerance: float = 0.002,
+    fill: bool = False,
+    multiplexed: bool = True,
+    return_equal_frames: bool = True,
+    burn_in: int = 300,
+    reference_camera: str = None,
+    return_full_sync_only: bool = True,
+    is_fluorescence_even: bool = True,
+    is_fluo_first: bool = False,
 ):
     from functools import reduce
+    import pandas as pd
 
+    # old strategy used system timestamps
+    # new strategy uses device timestamps after adjusting
+    # to a reference frame_id
+    #
+    # we assume that frame_id is exposure number with hw triggering
+    # thus frame_id = 200, e.g., should have the same timestamp across
+    # cameras
+    #
+    # we subtract of t(frame_id=200) from device_timestamps, then merge
     ts = {}
+    cameras = list(path.values())
+
+    # reference camera is the first by default
+    if reference_camera is None:
+        reference_camera = cameras[0]
     for _path, _cam in path.items():
-        # occassionally the filling logic will lead to weird
-        # discontinuities, so sort timestamps after this...
-        # alternatively, interpolate through other means...
         ts[_cam] = read_timestamps(
             _path,
             fill=fill,
             fill_kwargs={"use_timestamp_field": use_timestamp_field},
-        ).rename(columns={"frame_index": _cam}).sort_values(use_timestamp_field)
+        ).reset_index()
+        ts[_cam]["frame_id"] = ts[_cam]["frame_id"].astype("Int32")
+        ts[_cam]["frame_index"] = ts[_cam]["frame_index"].astype("Int32")
 
-    merged_ts = reduce(
-        lambda left, right: pd.merge_asof(
-            left,
-            right,
-            tolerance=merge_tolerance,
-            on=use_timestamp_field,
-            direction="nearest",
-        ),
-        ts.values(),
-    )
-    merged_ts.index = list(ts.values())[0].index
+    # find a common frame id after burn_in frames
+    # here, we assume the first 100-200 frames may have
+    # initialization issues typical with machine vision cams
+    sets = [set(ts[_cam]["frame_id"][ts[_cam]["frame_id"] >= burn_in]) for _cam in cameras]
+    common_ids = set.intersection(*sets)
+    reference_frame_id = int(min(common_ids))
 
-    return ts, merged_ts
+    # use the common id to get a device reference point for each camera...
+    for _cam in cameras:
+        idx = ts[_cam]["frame_id"] == reference_frame_id
+        val = ts[_cam].loc[idx]["device_timestamp"].iat[0]
+        ts[_cam]["device_timestamp_ref"] = ts[_cam]["device_timestamp"] - val
+
+    for _cam in cameras:
+        # normalize device timestamps after burn_in
+        cols = ts[_cam].columns
+        # only rename columns that are not use_timestamp_field
+        cols = pd.MultiIndex.from_tuples([(_cam, _col) for _col in cols])
+        cols = [_col if _col[1] != use_timestamp_field else _col[1] for _col in cols]
+        ts[_cam].columns = cols
+
+    if not multiplexed:
+        merged_ts = reduce(
+            lambda left, right: pd.merge_asof(
+                left,
+                right,
+                tolerance=merge_tolerance,
+                on=use_timestamp_field,
+                direction="nearest",
+            ),
+            ts.values(),
+        )
+        merged_ts.index = list(ts.values())[0].index
+        if return_full_sync_only:
+            print(f"Dropping from timestamps: {merged_ts.isnull().any(axis=1).sum()} (frames)")
+            print(f"Dropping from timestamps: {merged_ts.isnull().any(axis=1).mean() * 1e2:.3f} (%)")
+            print(f"Average FPS: {1 / merged_ts[use_timestamp_field].diff().mean():.3f}")
+            merged_ts = merged_ts.dropna()
+        return ts, merged_ts
+    else:
+        # fluo is EVEN, reflect is ODD
+        # note that with original slow parameters
+        # it didn't matter of fluo was associated
+        # with prev or next frame, with faster FPS
+        # fluo must go with PREVIOUS reflectance
+        fluo_ts = {}
+        reflect_ts = {}
+        for k, v in ts.items():
+            # display(v)
+            if is_fluorescence_even:
+                fluo_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 0]
+                reflect_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 1]
+            else:
+                fluo_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 1]
+                reflect_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 0]
+        merged_fluo_ts = reduce(
+            lambda left, right: pd.merge_asof(
+                left, right, tolerance=merge_tolerance, on=use_timestamp_field, direction="nearest"
+            ),
+            fluo_ts.values(),
+        )
+        merged_fluo_ts.index = merged_fluo_ts[(reference_camera, "frame_id")].to_numpy()
+        merged_reflect_ts = reduce(
+            lambda left, right: pd.merge_asof(
+                left, right, tolerance=merge_tolerance, on=use_timestamp_field, direction="nearest"
+            ),
+            reflect_ts.values(),
+        )
+        merged_reflect_ts.index = merged_reflect_ts[(reference_camera, "frame_id")].to_numpy()
+        if return_full_sync_only:
+
+            #
+            print(f"Dropping from fluorescence: {merged_fluo_ts.isnull().any(axis=1).sum()} (frames)")
+            print(f"Dropping from reflectance: {merged_fluo_ts.isnull().any(axis=1).sum()} (frames)")
+            print(f"Dropping from fluorescence: {merged_fluo_ts.isnull().any(axis=1).mean() * 1e2:.3f} (%)")
+            print(f"Dropping from reflectance: {merged_fluo_ts.isnull().any(axis=1).mean() * 1e2:.3f} (%)")
+            
+            merged_fluo_ts = merged_fluo_ts.dropna()
+            merged_reflect_ts = merged_reflect_ts.dropna()
+        if return_equal_frames:
+            # remember, we want the reflectance frames that came BEFORE fluorescence
+            # especially with faster timestamps this can make a big diff in timing
+            if is_fluo_first:
+                adjustment = + 1
+            else:
+                adjustment = - 1
+                
+            adjusted_idx = merged_fluo_ts.index + adjustment
+            common_idx = merged_reflect_ts.index.intersection(adjusted_idx)
+            merged_reflect_ts = merged_reflect_ts.loc[common_idx]
+            merged_fluo_ts = merged_fluo_ts.loc[common_idx - adjustment]
+
+            error_reflect_to_fluo = (
+                merged_fluo_ts[use_timestamp_field].values - merged_reflect_ts[use_timestamp_field].values
+            )
+            error_fluo_to_reflect = (
+                merged_reflect_ts[use_timestamp_field].values[1:] - merged_fluo_ts[use_timestamp_field].values[:-1]
+            )
+
+            print(f"Average gap from exposure start reflect to fluo: {error_reflect_to_fluo.mean():.4f} (secs)")
+            print(f"Average gap from exposure start fluo to reflect: {error_fluo_to_reflect.mean():.4f} (secs)")
+            print(f"Average FPS for fluorescence: {1 / merged_fluo_ts[use_timestamp_field].diff().mean():.3f}")
+            print(f"Average FPS for reflectance: {1 / merged_reflect_ts[use_timestamp_field].diff().mean():.3f}")
+
+            # print number of dropped frames?
+
+            # merged_fluo_ts = merge
+        return fluo_ts, reflect_ts, merged_fluo_ts, merged_reflect_ts
 
 
 def inscribe_text(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, text_pos=(30, 30)):
@@ -843,19 +998,62 @@ def inscribe_text(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, text_pos=(30, 30))
     )
 
 
-def pseudocolor_frames(frames, vmin=0, vmax=100, cmap=plt.get_cmap("turbo")):
-    nframes, height, width = frames.shape
-    pseudo_ims = np.zeros(
-        (nframes, height, width, 3), dtype="uint8"
-    )
-    for i, _img in enumerate(frames):
-        disp_img = _img.copy().astype("float32")
-        disp_img = (disp_img - vmin) / (vmax - vmin)
-        disp_img[disp_img < 0] = 0
-        disp_img[disp_img > 1] = 1
-        disp_img = np.delete(cmap(disp_img), 3, 2) * 255
-        pseudo_ims[i] = disp_img
-    return pseudo_ims
+def pseudocolor_frames(
+    stack: np.ndarray, cmap: int = cv2.COLORMAP_TURBO, vmin: float | None = None, vmax: float | None = None
+) -> np.ndarray:
+    """
+    Apply an OpenCV colormap to a stack of images with explicit vmin/vmax scaling.
+
+    Parameters
+    ----------
+    stack : np.ndarray
+        Grayscale image(s), shape (H, W) or (N, H, W).
+        dtype can be uint8/uint16/float.
+    cmap : int
+        OpenCV colormap constant (e.g., cv2.COLORMAP_VIRIDIS).
+    vmin, vmax : float or None
+        Intensity range to map to [0, 255].
+        If None, defaults to stack.min() / stack.max().
+
+    Returns
+    -------
+    np.ndarray
+        Colored images, shape (H, W, 3) or (N, H, W, 3), dtype=uint8 (BGR).
+    """
+    if stack.ndim == 2:
+        stack = stack[None, ...]  # add frame axis
+
+    stack = np.asarray(stack)
+
+    # Pick scaling range
+    if vmin is None:
+        vmin = float(stack.min())
+    if vmax is None:
+        vmax = float(stack.max())
+
+    # Normalize to [0, 255]
+    norm = (stack.astype(np.float32) - vmin) / (vmax - vmin + 1e-12)
+    norm = np.clip(norm, 0, 1)
+    norm = (norm * 255).astype(np.uint8)
+
+    # Apply colormap frame by frame
+    colored = [cv2.applyColorMap(frame, cmap) for frame in norm]
+    return colored[0] if len(colored) == 1 else np.stack(colored, axis=0)[..., ::-1]
+
+
+# def pseudocolor_frames(frames, vmin=0, vmax=100, cmap=plt.get_cmap("turbo")):
+#     nframes, height, width = frames.shape
+#     pseudo_ims = np.zeros(
+#         (nframes, height, width, 3), dtype="uint8"
+#     )
+#     for i, _img in enumerate(frames):
+#         disp_img = _img.copy().astype("float32")
+#         disp_img = (disp_img - vmin) / (vmax - vmin)
+#         disp_img[disp_img < 0] = 0
+#         disp_img[disp_img > 1] = 1
+#         disp_img = np.delete(cmap(disp_img), 3, 2) * 255
+#         pseudo_ims[i] = disp_img
+#     return pseudo_ims
 
 
 def mark_frame(frame, marker_color, marker_size):
@@ -956,3 +1154,60 @@ def format_intrinsics(intrinsics):
         )
         distortion_coeffs[k] = np.array([v["k1"], v["k2"], v["p1"], v["p2"], v["k3"]])
     return intrinsic_matrix, distortion_coeffs
+
+
+def get_cv2_colormap(colormap_name) -> int:
+    """
+    Get OpenCV colormap constant from string name or pass through integer.
+    
+    Parameters
+    ----------
+    colormap_name : str or int
+        Name of colormap (case-insensitive) or existing cv2 colormap constant.
+        Supported names: "jet", "turbo", "viridis", "plasma", "inferno", "magma",
+        "hot", "hsv", "cool", "spring", "summer", "autumn", "winter",
+        "bone", "copper", "flag", "prism", "ocean", "rainbow", "parula"
+    
+    Returns
+    -------
+    int
+        OpenCV colormap constant
+        
+    Raises
+    ------
+    ValueError
+        If colormap name is not recognized
+    """
+    if isinstance(colormap_name, int):
+        return colormap_name
+        
+    colormap_name = colormap_name.upper()
+    
+    colormap_mapping = {
+        "JET": cv2.COLORMAP_JET,
+        "TURBO": cv2.COLORMAP_TURBO,
+        "VIRIDIS": cv2.COLORMAP_VIRIDIS,
+        "PLASMA": cv2.COLORMAP_PLASMA,
+        "INFERNO": cv2.COLORMAP_INFERNO,
+        "MAGMA": cv2.COLORMAP_MAGMA,
+        "HOT": cv2.COLORMAP_HOT,
+        "HSV": cv2.COLORMAP_HSV,
+        "COOL": cv2.COLORMAP_COOL,
+        "SPRING": cv2.COLORMAP_SPRING,
+        "SUMMER": cv2.COLORMAP_SUMMER,
+        "AUTUMN": cv2.COLORMAP_AUTUMN,
+        "WINTER": cv2.COLORMAP_WINTER,
+        "BONE": cv2.COLORMAP_BONE,
+        "COPPER": cv2.COLORMAP_COPPER,
+        "FLAG": cv2.COLORMAP_FLAG,
+        "PRISM": cv2.COLORMAP_PRISM,
+        "OCEAN": cv2.COLORMAP_OCEAN,
+        "RAINBOW": cv2.COLORMAP_RAINBOW,
+        "PARULA": cv2.COLORMAP_PARULA,
+    }
+    
+    if colormap_name not in colormap_mapping:
+        available_maps = ", ".join(sorted(colormap_mapping.keys()))
+        raise ValueError(f"Unknown colormap '{colormap_name}'. Available: {available_maps}")
+    
+    return colormap_mapping[colormap_name]
