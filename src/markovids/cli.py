@@ -300,6 +300,7 @@ def cli_split_qd_vids(
 # fmt: off
 @cli.command(name="sync-depth-video", context_settings={"show_default": True, "auto_envvar_prefix": "MARKOVIDS_DEPTH"})
 @click.argument("data_dir", type=click.Path(exists=True))
+@click.option("--force/--no-force", default=False, show_envvar=True, help="Overwrite save directory if found")
 @click.option("--batch-size", type=int, default=500, show_envvar=True)
 @click.option("--intrinsics-file", type=click.Path(exists=True), default="intrinsics.toml", show_envvar=True, help="Path to intrinsics file")
 @click.option("--save-dir", type=str, default="_proc", show_envvar=True, help="Output directory name")
@@ -327,6 +328,7 @@ def cli_split_qd_vids(
 # fmt: on
 def cli_sync_depth_video(
     data_dir,
+    force,
     batch_size,
     intrinsics_file,
     save_dir,
@@ -392,6 +394,10 @@ def cli_sync_depth_video(
 
     # Build reader_kwargs
     reader_kwargs = {"threads": reader_threads}
+    output_dir = os.path.join(data_dir, save_dir)
+    if os.path.exists(output_dir) and (not force):
+        print(f"Directory {output_dir} exists, bailing...")
+        return None
 
     sync_depth_videos(
         data_dir,
@@ -405,7 +411,6 @@ def cli_sync_depth_video(
         preview_inpaint=preview_inpaint,
         reader_kwargs=reader_kwargs,
         batch_size=batch_size,
-
     )
 
 

@@ -626,7 +626,7 @@ def sync_depth_videos(
 
         montage_frames = video_montage(
             [frame_batch[_cam][..., None] for _cam in vid_camera_order], ncols=2
-        )
+        ).squeeze()
         # montage_frames = apply_opencv_colormap_stack(montage_frames, **colormap_kwargs)
         mp4_writer.write_frames(
             montage_frames, frames_idx=range(left_edge, right_edge), progress_bar=False, **write_frames_kwargs
