@@ -231,7 +231,7 @@ def estimate_bone_lengths_from_data(
                 bone_length = np.linalg.norm(pos2 - pos1)
 
                 # Basic sanity check
-                if 1.0 < bone_length < 200.0:  # Between 1mm and 200mm
+                if 1.0 < bone_length < 200.0:  # Between 1mm and 200mm TODO This should work still, but we pass before converting to mm
                     bone_measurements[bone_names].append(bone_length)
 
     # Compute statistics for each bone
@@ -664,6 +664,7 @@ class SlidingWindowTemporalRegularization:
             end = min(start + self.window_size, n_frames)
 
             # Process window
+            #TODO we don't use window_conf here?
             window_result, window_conf = self.base_regularizer.optimize_trajectory(
                 observations[start:end], confidences[start:end], mask[start:end]
             )
@@ -1360,18 +1361,55 @@ def smooth_all_keypoints(
     return smoothed_kpoints, smoothed_conf
 
 
-def edge_weight_map(keypoints_xy, image_shape=(640, 480), edge_margin=50, mode='quadratic'):
+# def edge_weight_map(keypoints_xy, image_shape=(640, 480), edge_margin=50, mode='quadratic'):
+#     """
+#     Compute attenuation factors for keypoints based on proximity to image edges.
+
+#     Parameters:
+#         keypoints_xy: (N, 2) array of (x, y) keypoint coordinates
+#         image_shape: (H, W) of the depth frame
+#         edge_margin: pixels from edge to start full attenuation (e.g., 20 px)
+#         mode: 'linear', 'quadratic', or 'sigmoid' falloff
+
+#     Returns:
+#         edge_weights: (N,) array in [0, 1], 1 = fully trusted, 0 = near edge
+#     """
+#     w, h = image_shape
+#     x = keypoints_xy[:, 0]
+#     y = keypoints_xy[:, 1]
+
+#     # Distance from each edge
+#     left = x
+#     right = w - x
+#     top = y
+#     bottom = h - y
+#     min_edge_dist = np.minimum(np.minimum(left, right), np.minimum(top, bottom))
+
+#     norm = np.clip(min_edge_dist / edge_margin, 0.1, 1) #TODO See if this makes keypoints disappear
+
+#     if mode == 'linear':
+#         return norm
+#     elif mode == 'quadratic':
+#         return norm**2
+#     elif mode == 'sigmoid':
+#         return 1 / (1 + np.exp(-6 * (norm - 0.5)))
+#     else:
+#         raise ValueError(f"Unknown edge weight mode: {mode}")
+
+def edge_weight_map(keypoints_xy, confidences, image_shape=(640, 480), edge_margin=50, mode='quadratic', confidence_threshold=0.5):
     """
-    Compute attenuation factors for keypoints based on proximity to image edges.
+    Compute attenuation factors for keypoints based on proximity to image edges, with downweighting applied only to low-confidence keypoints.
 
     Parameters:
         keypoints_xy: (N, 2) array of (x, y) keypoint coordinates
+        confidences: (N,) array of confidence values for each keypoint
         image_shape: (H, W) of the depth frame
-        edge_margin: pixels from edge to start full attenuation (e.g., 20 px)
+        edge_margin: Pixels from edge to start full attenuation (e.g., 50 px)
         mode: 'linear', 'quadratic', or 'sigmoid' falloff
+        confidence_threshold: Confidence threshold below which keypoints are downweighted near the edges
 
     Returns:
-        edge_weights: (N,) array in [0, 1], 1 = fully trusted, 0 = near edge
+        edge_weights: (N,) array in [0, 1], representing weights adjusted for low-confidence keypoints near the edges
     """
     w, h = image_shape
     x = keypoints_xy[:, 0]
@@ -1384,13 +1422,22 @@ def edge_weight_map(keypoints_xy, image_shape=(640, 480), edge_margin=50, mode='
     bottom = h - y
     min_edge_dist = np.minimum(np.minimum(left, right), np.minimum(top, bottom))
 
-    norm = np.clip(min_edge_dist / edge_margin, 0, 1)
+    # Normalize edge distances
+    norm = np.clip(min_edge_dist / edge_margin, 0.1, 1)
 
+    # Compute edge-based weight falloff
     if mode == 'linear':
-        return norm
+        edge_weights = norm
     elif mode == 'quadratic':
-        return norm**2
+        edge_weights = norm**2
     elif mode == 'sigmoid':
-        return 1 / (1 + np.exp(-6 * (norm - 0.5)))
+        edge_weights = 1 / (1 + np.exp(-6 * (norm - 0.5)))
     else:
         raise ValueError(f"Unknown edge weight mode: {mode}")
+
+    # Apply downweighting only to low-confidence keypoints
+    low_conf_mask = confidences < confidence_threshold
+    final_weights = confidences.copy()
+    final_weights[low_conf_mask] = edge_weights[low_conf_mask] * confidences[low_conf_mask]
+
+    return final_weights

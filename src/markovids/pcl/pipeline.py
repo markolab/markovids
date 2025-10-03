@@ -9,143 +9,68 @@ import h5py
 import warnings
 import pandas as pd
 from markovids import depth, vid, pcl, util
+from markovids.pcl.post_processing import post_processing
+from collections import defaultdict
+
+def nan_safe_linalg_norm(arr1, arr2, axis=1):
+    """
+    Compute L2 norm between two arrays, handling NaN values safely.
+    
+    Args:
+        arr1 (np.ndarray): First array of shape (n, m) or (n,). Represents multiple points.
+        arr2 (np.ndarray): Second array of shape (m,) or (1, m). Represents a single reference point.
+        axis (int): Axis along which to compute the norm. Default is 1.
+
+    Returns:
+        np.ndarray: L2 norms with NaNs excluded. If all values are NaN for a
+                    particular row, the result for that row will be NaN.
+    """
+    # Ensure arr2 is broadcastable to arr1
+    if arr1.shape[-1] != arr2.shape[-1]:
+        raise ValueError("Trailing dimensions of arr1 and arr2 must match for broadcasting.")
+
+    # Find the difference, broadcasting arr2 if necessary
+    diff = arr1 - arr2
+
+    # Identify valid (non-NaN) elements
+    valid_mask = ~np.isnan(diff)
+
+    # Initialize an array for norms with NaN as default
+    norm_result = np.full(arr1.shape[0], np.nan)
+
+    # Compute norms row-wise where valid data exists
+    for i in range(arr1.shape[0]):
+        row_mask = valid_mask[i]
+        if np.any(row_mask):  # Only compute if there are valid values
+            norm_result[i] = np.linalg.norm(diff[i][row_mask])
+
+    return norm_result
+
+def get_bground_vals(keyps, _cam, bground_by_cam, width=640, height=480):
+    bground = bground_by_cam[_cam]
+    
+    # Get x,y coordinates
+    xy = keyps[...,:2]
+    
+    # Floor and clip coordinates in one step
+    xy_int = np.clip(xy.astype(np.int32), 0, [width-1, height-1])
+    
+    # Create mask for valid (non-NaN) coordinates
+    valid_mask = ~np.isnan(xy).any(axis=-1)
+    
+    # Initialize background values array with NaN
+    bground_vals = np.full((keyps.shape[0], keyps.shape[1]), np.nan)
+    
+    # Index background values using valid coordinates
+    bground_vals[valid_mask] = bground[xy_int[valid_mask,0], xy_int[valid_mask,1]]
+
+    
+    return bground_vals
 
 from pathlib import Path
 
-#TODO move out
-
-def apply_final_smoothing(keypoints, keypoint_names, window_length=5, polyorder=3, fps=100):
-    """Light final smoothing pass with Savitzky-Golay filter"""
-    smoothed = keypoints.copy()
-
-    for kp_idx, kp_name in enumerate(keypoint_names):
-        # Adaptive parameters based on keypoint
-        if "tail_tip" in kp_name or "snout" in kp_name:
-            _window_length = window_length   # ~50ms at 100fps
-            _polyorder = polyorder - 1
-        else:
-            _window_length = window_length + 2  # ~70ms at 100fps
-            _polyorder = polyorder
-
-        for dim in range(3):
-            trajectory = keypoints[:, kp_idx, dim]
-            if not np.all(np.isnan(trajectory)):
-                # Only smooth non-NaN portions
-                smoothed[:, kp_idx, dim] = savgol_filter(
-                    trajectory, _window_length, _polyorder, mode="nearest"  # Good edge handling
-                )
-
-    return smoothed
-
-
-# defaults...
-reference_camera = "Lucid Vision Labs-HTP003S-001-224500508"
-incl_kpoints_fit_transform = [
-    "back_bottom",
-    "back_middle_lower",
-    "back_middle_upper",
-    "back_top",
-    "left_hip",
-    "right_hip",
-    "left_shoulder",
-    "right_shoulder",
-]
-
-plt_kpoints = [
-    "tail_tip",
-    "tail_middle",
-    "tail_base",
-    "back_bottom",
-    "back_middle_lower",
-    "back_middle_upper",
-    "back_top",
-    "left_hip",
-    "right_hip",
-    "left_shoulder",
-    "right_shoulder",
-]
-
-noisy_keypoints = ["tail_tip", "tail_middle", "tail_base", "snout"]
-
-# we may need more aggressive filtering with cables present...
-smoothing_params = {
-    "not_noisy": {"window_length": int(5), "poly_order": int(2)},
-    "noisy": {"window_length": int(25), "poly_order": int(2)},
-}
-hampel_params = {
-    "window": 100,
-    "threshold": 4,
-    "replace": False,
-
-}
-interpolate = 10
-renderer_kwargs = {
-    "trail_length": 5,
-    "xlim": (-175, 225),
-    "ylim": (-125, 275),
-    "zlim": (-10, 105),
-    # "elevation": 30,
-    # "azimuth": 65,
-}
-
-skeleton = [
-    ("tail_tip", "tail_middle"),
-    ("tail_middle", "tail_base"),
-    # ("tail_base", "back_bottom"),
-    ("back_middle_lower", "back_middle_upper"),
-    ("back_middle_upper", "back_top"),
-    ("left_ear", "right_ear"),
-    ("left_shoulder", "right_shoulder"),
-    ("left_hip", "right_hip"),
-    ("back_top", "left_shoulder"),
-    ("back_top", "right_shoulder"),
-    ("back_bottom", "left_hip"),
-    ("back_bottom", "right_hip"),
-]
-
-
-fps=100
-
-def registration_pipeline(
-    use_data_dir,
-    kpoints_save_dir="_kpoints_v0_3d",
-    reference_camera=reference_camera,
-    intrinsics_matrix=None,
-    distortion_coefficients=None,
-    bground_erode_px=60,
-    smoothing_params=smoothing_params,
-    hampel_params=hampel_params,
-    noisy_keypoints=noisy_keypoints,
-    min_confidence=0.4,
-    interpolate=10,
-    z_scale=4.0,
-    incl_kpoints_fit_transform=incl_kpoints_fit_transform,
-    plt_kpoints=plt_kpoints,
-    mp4_max_render_frames=None,
-    mp4_renderer="vedo",
-    mp4_burn_in=50,
-    save_file="merged_keypoints.h5",
-    alt_save_dir=None,
-    meta_path = None,
-    cable=False
-):
-
-    if alt_save_dir:
-        output_path = os.path.join(alt_save_dir, kpoints_save_dir)
-        os.makedirs(os.path.join(alt_save_dir, kpoints_save_dir), exist_ok=True)
-    else:
-        output_path = os.path.join(use_data_dir, kpoints_save_dir)
-        
-    if os.path.exists(os.path.join(output_path, save_file)): # already been processed
-        return None
-
-    if (intrinsics_matrix is None) or (distortion_coefficients is None):
-        raise RuntimeError(
-            "Need intrinsics and distortion_coefficients dictionaries to continue"
-        )
-
+def get_processing_params(cable):
     postprocessing_params = {}
-
     if cable:
         postprocessing_params["temporal_regularization"] = {
             "fps": fps,
@@ -185,6 +110,7 @@ def registration_pipeline(
             "polyorder": 3,
         }
     else:
+        postprocessing_params = {}
         postprocessing_params["temporal_regularization"] = {
             "fps": fps,
             "lambda_jerk": 1e-8,
@@ -198,7 +124,7 @@ def registration_pipeline(
             "iterations": 10,
             "violation_threshold": 1.5,
         }
-        postprocessing_params["pca"] = {"n_components": 6, "n_iterations": 30}  # with cable
+        postprocessing_params["pca"] = {"n_components": 8, "n_iterations": 30}  # with cable
         postprocessing_params["align"] = {
             "exclude_from_center": ["snout", "tail_base", "tail_middle", "tail_tip", "left_ear", "right_ear"],
             "use_median_centering": True,
@@ -211,6 +137,136 @@ def registration_pipeline(
             "polyorder": 3,
         }
 
+    return postprocessing_params
+
+# defaults...
+reference_camera = "Lucid Vision Labs-HTP003S-001-224500508"
+incl_kpoints_fit_transform = [
+    "back_bottom",
+    "back_middle_lower",
+    "back_middle_upper",
+    "back_top",
+    "left_hip",
+    "right_hip",
+    "left_shoulder",
+    "right_shoulder",
+]
+
+incl_kpoints_post_processing = [
+    "tail_tip",
+    "tail_middle",
+    "tail_base",
+    "back_bottom",
+    "back_middle_lower",
+    "back_middle_upper",
+    "back_top",
+    "left_hip",
+    "right_hip",
+    "left_shoulder",
+    "right_shoulder",
+    "left_ear",
+    "right_ear",
+    "snout"
+]
+
+plt_kpoints = [
+    "tail_tip",
+    "tail_middle",
+    "tail_base",
+    "back_bottom",
+    "back_middle_lower",
+    "back_middle_upper",
+    "back_top",
+    "left_hip",
+    "right_hip",
+    "left_shoulder",
+    "right_shoulder",
+]
+
+noisy_keypoints = ["tail_tip", "tail_middle", "tail_base", "snout"]
+
+# we may need more aggressive filtering with cables present...
+smoothing_params = {
+    "not_noisy": {"window_length": int(5), "poly_order": int(2)},
+    "noisy": {"window_length": int(25), "poly_order": int(2)},
+}
+hampel_params = {
+    "window": 100,
+    "threshold": 2.5,
+    "replace": False,
+
+}
+interpolate = 10
+renderer_kwargs = {
+    "trail_length": 5,
+    "xlim": (-300, 300),
+    "ylim": (-300, 300),
+    "zlim": (-10, 105),
+    # "elevation": 30,
+    # "azimuth": 65,
+}
+
+skeleton = [
+    ("tail_tip", "tail_middle"),
+    ("tail_middle", "tail_base"),
+    ("back_middle_lower", "back_middle_upper"),
+    ("back_middle_upper", "back_top"),
+    ("left_ear", "right_ear"),
+    ("left_shoulder", "right_shoulder"),
+    ("left_hip", "right_hip"),
+    ("back_top", "left_shoulder"),
+    ("back_top", "right_shoulder"),
+    ("back_bottom", "left_hip"),
+    ("back_bottom", "right_hip"),
+    ("snout", "left_ear"),
+    ("snout", "right_ear")
+]
+
+fps=100
+
+def registration_pipeline(
+    use_data_dir,
+    kpoints_save_dir="_kpoints_v0_3d",
+    reference_camera=reference_camera,
+    intrinsics_matrix=None,
+    distortion_coefficients=None,
+    bground_erode_px=60,
+    smoothing_params=smoothing_params,
+    hampel_params=hampel_params,
+    noisy_keypoints=noisy_keypoints,
+    min_confidence=0.4,
+    interpolate=10,
+    z_scale=1.0,
+    incl_kpoints_fit_transform=incl_kpoints_fit_transform,
+    plt_kpoints=plt_kpoints,
+    mp4_max_render_frames=None,
+    mp4_renderer="vedo",
+    mp4_burn_in=50,
+    save_file="merged_keypoints.h5",
+    alt_save_dir=None,
+    meta_path = None,
+    cable=False,
+    constrain_bones=True,
+    impute_pca=True,
+    regularize_temporal=True
+):
+
+    if alt_save_dir:
+        output_path = os.path.join(alt_save_dir, kpoints_save_dir)
+        os.makedirs(os.path.join(alt_save_dir, kpoints_save_dir), exist_ok=True)
+    else:
+        output_path = os.path.join(use_data_dir, kpoints_save_dir)
+        
+    # if os.path.exists(os.path.join(output_path, save_file)): # already been processed
+    #     print(f"{os.path.join(output_path, save_file)} exists, previously processed. Exiting...")
+    #     return None
+
+    if (intrinsics_matrix is None) or (distortion_coefficients is None):
+        raise RuntimeError(
+            "Need intrinsics and distortion_coefficients dictionaries to continue"
+        )
+
+    postprocessing_params = get_processing_params(cable)    
 
     # Camera intrinsics
     cx = intrinsics_matrix[reference_camera][0, 2]
@@ -229,30 +285,56 @@ def registration_pipeline(
         warnings.warn(f"Did not find metadata file {metadata_file}")
         return None
 
-    # Load background to compute the floor plane
-    bground_file = os.path.join(use_data_dir, "_bground", f"{reference_camera}.tiff")
+    width = metadata["camera_metadata"][reference_camera]["Width"] # are these swapped
+    height = metadata["camera_metadata"][reference_camera]["Height"]
+    # # Load background to compute the floor plane
+    # bground_file = os.path.join(use_data_dir, "_bground", f"{reference_camera}.tiff")
 
-    try:
+    # try:
+    #     bground = tifffile.imread(bground_file)
+    # except FileNotFoundError as e:
+    #     warnings.warn(f"Did not find background file {bground_file}")
+    #     return None
+
+    # bground_roi = depth.plane.get_floor(bground.astype("float"), dilations=0)
+
+    # kernel = cv2.getStructuringElement(
+    #     cv2.MORPH_ELLIPSE, (bground_erode_px, bground_erode_px)
+    # )  # erode walls, etc.
+    # use_bground_roi = cv2.erode(
+    #     bground_roi, kernel
+    # )  # erode so we only get a big chunk of the middle
+
+    # floor_distance = np.median(bground[use_bground_roi]) / 4.0
+    bground_by_cam = {}
+    floor_dist_cam = {}
+
+    for camera in cameras:
+        intrinsic_matrix = intrinsics_matrix[camera]
+        distortion_coeff = distortion_coefficients[camera]
+        
+        bground_file = os.path.join(use_data_dir, "_bground", f"{camera}.tiff")
+
         bground = tifffile.imread(bground_file)
-    except FileNotFoundError as e:
-        warnings.warn(f"Did not find background file {bground_file}")
-        return None
+        bground = cv2.undistort(bground, intrinsic_matrix, distortion_coeff)
+        bground_roi = depth.plane.get_floor(bground.astype("float"), dilations=0)
 
-    bground_roi = depth.plane.get_floor(bground.astype("float"), dilations=0)
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (bground_erode_px, bground_erode_px)
+        )  # erode walls, etc.
+        use_bground_roi = cv2.erode(
+            bground_roi, kernel
+        )  # erode so we only get a big chunk of the middle
 
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (bground_erode_px, bground_erode_px)
-    )  # erode walls, etc.
-    use_bground_roi = cv2.erode(
-        bground_roi, kernel
-    )  # erode so we only get a big chunk of the middle
-
-    floor_distance = np.median(bground[use_bground_roi])
-
+        floor_distance = np.median(bground[use_bground_roi]) / 4.0 
+        
+        floor_dist_cam[camera] = floor_distance
+        
+        bground_by_cam[camera] = bground.T / 4.0
 
     # Load 3D keypoints, computed previously
     kpoints_metadata = toml.load(
-        os.path.join(use_data_dir, kpoints_save_dir, f"{cameras[0]}.toml")
+        os.path.join(use_data_dir, "_proc", kpoints_save_dir, f"{cameras[0]}.toml")
     )
 
     nbody_parts = len(kpoints_metadata["node_names"])
@@ -263,16 +345,66 @@ def registration_pipeline(
     kpoints_dat = {}
     for _cam in cameras:
         kpoints_dat[_cam] = joblib.load(
-            os.path.join(use_data_dir, kpoints_save_dir, f"{_cam}.pkl.gz")
+            os.path.join(use_data_dir, "_proc", kpoints_save_dir, f"{_cam}.pkl.gz")
         )
 
+    # We need another pass to match min_frames
+    min_frames = min(data.shape[0] for data in kpoints_dat.values())
+    for _cam in cameras:
+        bground = bground_by_cam[_cam]
+        kpoints_dat[_cam] = kpoints_dat[_cam][:min_frames]
+        
+        # Get x,y coordinates
+        xy = kpoints_dat[_cam][...,:2]
+        
+        # Floor and clip coordinates in one step
+        xy_int = np.clip(xy.astype(np.int32), 0, [width-1, height-1])
+        
+        # Create mask for valid (non-NaN) coordinates
+        valid_mask = ~np.isnan(xy).any(axis=-1)
+        
+        # Initialize background values array with NaN
+        bground_vals = np.full((min_frames, kpoints_dat[_cam].shape[1]), np.nan)
+        
+        # Index background values using valid coordinates
+        bground_vals[valid_mask] = bground[xy_int[valid_mask,0], xy_int[valid_mask,1]]
+        
+        # Update z-coordinates
+        kpoints_dat[_cam][...,2] = -1 * kpoints_dat[_cam][...,2] + bground_vals
 
+    # TODO won't need this with proc ...
     # only include fully sync'd data...
-    use_frames = merged_ts.dropna().astype(np.int)
+    use_frames = merged_ts.dropna().astype(np.int) #TODO more elegant way to get timestamps
 
     # syncing...
+    # for _cam in cameras:
+    #     kpoints_dat[_cam] = kpoints_dat[_cam][use_frames[_cam]]
+
+    n_frames, nbody_parts, dims = kpoints_dat[reference_camera].shape
+
+    ### Convert to World coordinates
+    kpoints_dat_conv = defaultdict(lambda: np.zeros((n_frames, nbody_parts, dims)))
+
     for _cam in cameras:
-        kpoints_dat[_cam] = kpoints_dat[_cam][use_frames[_cam]]
+        cx = intrinsics_matrix[_cam][0, 2]
+        cy = intrinsics_matrix[_cam][1, 2]
+        fx = intrinsics_matrix[_cam][0, 0]
+        fy = intrinsics_matrix[_cam][1, 1]
+        
+        _converted = pcl.io.project_world_coordinates(
+            kpoints_dat[_cam][..., :3].reshape(-1, 3),
+            floor_distance=None,
+            cx=cx,
+            cy=cy,
+            fx=fx,
+            fy=fy,
+            z_scale=1.0,
+        ).reshape(-1, nbody_parts, 3)
+        
+        kpoints_dat_conv[_cam][..., :3] = _converted
+        kpoints_dat_conv[_cam][..., 3] = kpoints_dat[_cam][..., 3]
+        
+        # kpoints_dat_conv[_cam][..., 2] = -1 * kpoints_dat_conv[_cam][..., 2] + get_bground_vals(kpoints_dat[_cam], _cam, bground_by_cam)
 
     # Only include subset of nodes for transform
     incl_kpoints_idx = [
@@ -280,17 +412,21 @@ def registration_pipeline(
         for _incl in incl_kpoints_fit_transform
     ]
     
+    #TODO Some cameras can stop early?
+    # for _cam in kpoints_dat:
+    #     print(f"{_cam} has shape {kpoints_dat[_cam].shape}")
+
     use_points = []
     use_points_cam = [reference_camera]
     use_points.append(
-        kpoints_dat[reference_camera][:, incl_kpoints_idx, :].reshape(-1, 4)
+        kpoints_dat_conv[reference_camera][:, incl_kpoints_idx, :].reshape(-1, 4)
     )
 
     for _cam in cameras:
         if _cam == reference_camera:
             continue
         else:
-            use_points.append(kpoints_dat[_cam][:, incl_kpoints_idx, :].reshape(-1, 4))
+            use_points.append(kpoints_dat_conv[_cam][:, incl_kpoints_idx, :].reshape(-1, 4))
             use_points_cam.append(_cam)
 
     excl = np.isnan(use_points[0]).any(axis=1)
@@ -319,13 +455,14 @@ def registration_pipeline(
         result_rigid["C_to_A"]["t"],
     )
 
-    use_dat = copy.deepcopy(kpoints_dat)
+    use_dat = copy.deepcopy(kpoints_dat_conv)
+    use_dat_edge = copy.deepcopy(kpoints_dat)
 
     # weight points based on proximity to edges
     for _cam in cameras:
-        xy = use_dat[_cam][..., [0, 1, 3]].reshape(-1, 3)
-        edge_weighting = pcl.kpoints.edge_weight_map(xy[:, :2], edge_margin=100)
-        xy[:, 2] *= edge_weighting
+        xy = use_dat_edge[_cam][..., [0, 1, 3]].reshape(-1, 3)
+        edge_weighting = pcl.kpoints.edge_weight_map(xy[:, :2], xy[..., 2], edge_margin=25)
+        xy[:, 2] = edge_weighting
         xy = xy.reshape(-1, nbody_parts, 3)
         use_dat[_cam][..., 3] = xy[..., 2]
 
@@ -340,23 +477,93 @@ def registration_pipeline(
         for _frame in range(nframes):
             rem = np.isnan(proj_points[i][_frame]).any(axis=-1)
             proj_points[i][_frame][rem, :] = np.nan
-
+    
     # per-frame adjustment : bundle adjustment assumes constant rigid transform, but some errors in alignment may occur
+    # for i, _cam in enumerate(cameras):
+    #     if _cam == reference_camera:
+    #         continue
+    #     use_points = proj_points[i]
+    #     ref_points = proj_points[ref_index]
+    #     for _frame in range(nframes):
+    #         with warnings.catch_warnings():
+    #             warnings.filterwarnings("ignore", category=RuntimeWarning)
+    #             bias = np.nanmean(use_points[_frame] - ref_points[_frame], axis=0)[:3] # some points may be off
+    #         # any nans should be replaced by most recent bias term...
+    #         bias[np.isnan(bias)] = 0
+    #         proj_points[i][_frame, :, :3] -= bias[None, :]
+
     for i, _cam in enumerate(cameras):
-        if i == reference_camera:
+        if _cam == reference_camera:
             continue
+
         use_points = proj_points[i]
         ref_points = proj_points[ref_index]
+
         for _frame in range(nframes):
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=RuntimeWarning)
-                bias = np.nanmean(use_points[_frame] - ref_points[_frame], axis=0)[:3] # some points may be off
-            # any nans should be replaced by most recent bias term...
-            bias[np.isnan(bias)] = 0
-            proj_points[i][_frame, :, :3] -= bias[None, :]
+            # Confidence threshold for high-confidence keypoints
+            confidence_threshold = 0.6
+
+            # Find high-confidence keypoints in the reference camera
+            ref_confidences = ref_points[_frame, :, 3]
+            ref_high_conf_mask = ref_confidences >= confidence_threshold
+
+            # Find high-confidence keypoints in the current camera
+            use_confidences = use_points[_frame, :, 3]
+            use_high_conf_mask = use_confidences >= confidence_threshold
+
+            # Compute the intersection of high-confidence keypoints
+            high_conf_mask = ref_high_conf_mask & use_high_conf_mask
+
+            # Check if there are more than 4 high-confidence keypoints in the intersection
+            if np.sum(high_conf_mask) > 4:
+                valid_use_points = use_points[_frame][high_conf_mask, :3]
+                valid_ref_points = ref_points[_frame][high_conf_mask, :3]
+
+                # Compute the bias using the valid high-confidence keypoints
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=RuntimeWarning)
+                    bias = np.nanmean(valid_use_points - valid_ref_points, axis=0)
+
+                # Replace NaNs in bias with the most recent bias term
+                bias[np.isnan(bias)] = 0
+
+                # Apply the bias correction to all keypoints in the current frame
+                proj_points[i][_frame, :, :3] -= bias[None, :]
 
     # merge data via a weighted average
-    merge_method = "weighted"
+    # merge_method = "weighted"
+    # merged_data = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
+    # merged_conf = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
+    # for i in range(len(cameras)):
+    #     merged_conf[:, :, i] = proj_points[i, :, :, 3]
+    # for _frame in range(nframes):
+    #     weights = proj_points[:, _frame, :, 3][..., None]
+    #     weights = util.squash_conf(
+    #         weights, min_cutoff=min_confidence
+    #     )  # soft threshold the weights
+    #     # merged_conf[_frame] = proj_points
+    #     if merge_method == "weighted":
+    #         with warnings.catch_warnings():
+    #             warnings.filterwarnings("ignore", category=RuntimeWarning)
+    #             weighted_average = np.nansum(
+    #                 (proj_points[:, _frame, :, :3] * weights), axis=0
+    #             ) / np.nansum(weights, axis=0)
+    #         merged_data[_frame] = weighted_average
+    #     elif merge_method == "max":
+    #         for i in range(nbody_parts):
+    #             try:
+    #                 use_cam = np.nanargmax(proj_points[:, _frame, i, 3], axis=0)
+    #             except ValueError:
+    #                 continue
+    #             merged_data[_frame, i, :] = proj_points[use_cam, _frame, i, :3]
+
+    # all_keypoints = kpoints_metadata["node_names"]
+    # not_noisy_keypoints = list(set(all_keypoints).difference(noisy_keypoints))
+
+    # merge data via a weighted average
+    merge_method = "mixed"
+    min_confidence = 0.4
+    distance_threshold = 15
     merged_data = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
     merged_conf = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
     for i in range(len(cameras)):
@@ -381,77 +588,50 @@ def registration_pipeline(
                 except ValueError:
                     continue
                 merged_data[_frame, i, :] = proj_points[use_cam, _frame, i, :3]
+        elif merge_method == "mixed":
+            for i in range(nbody_parts):
+                # Extract confidence values for this frame and body part
+                confidences = proj_points[:, _frame, i, 3]
+
+                # Find the most confident camera for this body part
+                if np.all(np.isnan(confidences)) or np.nanmax(confidences) < min_confidence:
+                    continue  # Skip if no valid predictions or all below the confidence threshold
+                ref_cam = np.nanargmax(confidences)
+                ref_point = proj_points[ref_cam, _frame, i, :3]
+
+                # Compute L2 distances from all other cameras to the reference point
+                distances = nan_safe_linalg_norm(
+                    proj_points[:, _frame, i, :3], ref_point[None, :]
+                )
+
+                # Create a mask for valid points within the distance threshold
+                valid_mask = (distances <= distance_threshold) & ~np.isnan(distances)
+
+                # Skip merging if no valid points remain
+                if not np.any(valid_mask):
+                    continue
+
+                # Use a weighted average of valid points
+                valid_keypoints = proj_points[valid_mask, _frame, i, :3]
+                valid_confidences = confidences[valid_mask]
+                weights = util.squash_conf(valid_confidences[..., None], min_cutoff=min_confidence)
+
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=RuntimeWarning)
+                    weighted_average = np.nansum(
+                        valid_keypoints * weights, axis=0
+                    ) / np.nansum(weights, axis=0)
+
+                # Assign the merged keypoint to the output array
+                merged_data[_frame, i, :] = weighted_average
+            
 
     all_keypoints = kpoints_metadata["node_names"]
     not_noisy_keypoints = list(set(all_keypoints).difference(noisy_keypoints))
 
-    '''
-        Begin additional post-processing
-    '''
-    # merged_data will be the post-processed
-
-    # NO SNOUT!
-    node_mapping = kpoints_metadata["node_mapping"]
-    new_node_mapping = {k: v for k, v in node_mapping.items() if ("snout" not in k)}
-    new_node_mapping = {k: i for i, k in enumerate(new_node_mapping.keys())}
-
-    kp_list = list(new_node_mapping.keys())
-
-
-    smoothed_kpoints, smoothed_conf = pcl.kpoints.smooth_all_keypoints(merged_data, merged_conf,
-                                                                            **postprocessing_params["temporal_regularization"])
-    bone_constraints = pcl.kpoints.create_bone_constraints_from_data(
-        smoothed_kpoints,
-        list(new_node_mapping.keys()),
-        skeleton,
-        smoothed_conf,
-    )
-
-    optimizer = pcl.kpoints.BoneConstraintOptimizer(
-        bone_constraints, **postprocessing_params["bone_length_regularization"]
-    )
-    bone_constrained_smoothed_kpoints, bone_constrained_smoothed_conf = optimizer.process_sequence(
-        smoothed_kpoints, smoothed_conf
-    )
-
-
-    # PCA IMPUTATION: align poses according to 2d center and orientation, use PCA to fill missing data...
-    nframes, nkeypoints, ndims = merged_data.shape
-    aligner = pcl.kpoints.PoseAligner(keypoint_names=kp_list, **postprocessing_params["align"])
-    pca_imputer = pcl.kpoints.PCAImputer(**postprocessing_params["pca"])
-
-    # Compute alignment
-    centroids, angles = aligner.compute_alignment(
-        bone_constrained_smoothed_kpoints, **postprocessing_params["align_compute"]
-    )
-
-    # Transform to aligned space
-    aligned_kpoints = aligner.transform(bone_constrained_smoothed_kpoints, centroids, angles)
-
-    # Impute missing values
-    imputed_aligned_kpoints = pca_imputer.impute(aligned_kpoints, aligner)
-
-    # Transform back to original space
-    imputed_kpoints = aligner.inverse_transform(imputed_aligned_kpoints, centroids, angles)
-    was_imputed = np.isnan(bone_constrained_smoothed_kpoints).any(axis=-1)
-    imputed_conf = pcl.kpoints.compute_imputation_confidence(was_imputed)
-    imputed_kpoints_filtered, outlier_mask = pcl.kpoints.hampel_filter(
-        imputed_kpoints, was_imputed, **postprocessing_params["post_align_hampel"]
-    )
-    smoothed_interpolated_kpoints = pcl.kpoints.simple_smooth_imputed(
-        imputed_kpoints_filtered, was_imputed, **postprocessing_params["post_align_imputed_smoothing"]
-    )
-
-    # apply bone constraints one more time after imputation
-    optimizer = pcl.kpoints.BoneConstraintOptimizer(bone_constraints, **postprocessing_params["bone_length_regularization"])
-    final_smoothed, final_conf = optimizer.process_sequence(smoothed_interpolated_kpoints, imputed_conf)
-
-    # final smoothing
-    final_smoothed = apply_final_smoothing(final_smoothed, kp_list, **postprocessing_params["post_align_sgolay"])
 
     '''
-        End additional post-processing
-        TODO once confirm correct output, clean up this code
+        Hampel Filter to remove outliers and interpolate before addtl post processing
     '''
 
     # _test = pd.DataFrame(merged_data.reshape(-1, nbody_parts * 3))  # ONLY SMOOTH XYZ
@@ -477,31 +657,79 @@ def registration_pipeline(
     #             lambda x: util.savgol_filter_missing(x, **smoothing_params["not_noisy"])
     #         )
 
-    merged_data_proc = final_smoothed # _test.to_numpy().reshape(-1, nbody_parts, 3)
+    # merged_data_proc = _test.to_numpy().reshape(-1, nbody_parts, 3)
+
+    '''
+        Begin additional post-processing
+    '''
+    # merged_data will be post-processed    
+
+    # merged_data_proj = pcl.io.project_world_coordinates(
+    #     merged_data.reshape(-1, 3),
+    #     floor_distance=floor_distance,
+    #     cx=cx,
+    #     cy=cy,
+    #     fx=fx,
+    #     fy=fy,
+    #     z_scale=1.0,
+    # ).reshape(-1, nbody_parts, 3)
+
+    merged_data_proc = merged_data.copy() #TODO change if don't want hampel
+    merged_conf_proc = merged_conf.copy() # TODO we need to better think about this
+
+    if any([constrain_bones, impute_pca, regularize_temporal]):
+        final_smoothed, final_conf = post_processing(
+            merged_data,
+            merged_conf,
+            kpoints_metadata,
+            postprocessing_params,
+            incl_kpoints_post_processing,
+            skeleton,
+            constrain_bones=constrain_bones,
+            impute_pca=False,
+            regularize_temporal=regularize_temporal
+        )
+
+
+        incl_kpoints_post_proc_idx = [
+            kpoints_metadata["node_names"].index(_incl)
+            for _incl in incl_kpoints_post_processing
+        ]
+
+        merged_data_proc[:, incl_kpoints_post_proc_idx] = final_smoothed
+    # merged_conf_proc[:, incl_kpoints_post_proc_idx] = final_conf
+
+    '''
+        End additional post-processing
+    '''
+
     plt_kpoints_idx = [
         kpoints_metadata["node_names"].index(_incl) for _incl in plt_kpoints
     ]
 
+    #TODO UPDATE THIS CODE
     # save smoothed and raw after projecting into world coordinates (mm)...
-    merged_data_proj_smooth = pcl.io.project_world_coordinates(
-        merged_data_proc.reshape(-1, 3),
-        floor_distance=floor_distance,
-        cx=cx,
-        cy=cy,
-        fx=fx,
-        fy=fy,
-        z_scale=z_scale,
-    ).reshape(-1, nbody_parts, 3)
+    merged_data_proj_smooth = merged_data_proc.copy()
+    # pcl.io.project_world_coordinates(
+    #     merged_data_proc.reshape(-1, 3),
+    #     floor_distance=floor_distance,
+    #     cx=cx,
+    #     cy=cy,
+    #     fx=fx,
+    #     fy=fy,
+    #     z_scale=z_scale,
+    # ).reshape(-1, nbody_parts, 3)
 
-    merged_data_proj_raw = pcl.io.project_world_coordinates(
-        merged_data.reshape(-1, 3),
-        floor_distance=floor_distance,
-        cx=cx,
-        cy=cy,
-        fx=fx,
-        fy=fy,
-        z_scale=z_scale,
-    ).reshape(-1, nbody_parts, 3)
+    merged_data_proj_raw = merged_data.copy() #
+    # pcl.io.project_world_coordinates(
+    #     merged_data.reshape(-1, 3),
+    #     floor_distance=floor_distance,
+    #     cx=cx,
+    #     cy=cy,
+    #     fx=fx,
+    #     fy=fy,
+    #     z_scale=z_scale,
+    # ).reshape(-1, nbody_parts, 3) #TODO we drop 1 bodypart
 
     all_bgrounds = {}
 
@@ -543,7 +771,17 @@ def registration_pipeline(
         )
         f.create_dataset(
             "merged_keypoints_confidence",
-            data=merged_conf.astype("float32"),
+            data=merged_conf_proc.astype("float32"), # merged_conf.astype("float32"),
+            compression="gzip",
+        )
+        f.create_dataset(
+            "post_processing_confidence",
+            data=final_conf.astype("float32"),
+            compression="gzip",
+        )
+        f.create_dataset(
+            "proj_point_conf",
+            data=proj_points[..., 3].astype("float32"),
             compression="gzip",
         )
 
@@ -567,6 +805,7 @@ def registration_pipeline(
     metadata["transforms"] = new_transforms
     metadata["transform_type"] = "rigid"
     metadata["reference_camera"] = reference_camera
+    metadata["cameras"] = cameras
     metadata["camera_parameters"] = {
         "cx": cx,
         "cy": cy,
@@ -579,9 +818,6 @@ def registration_pipeline(
 
     toml_path = os.path.join(output_path, f"{os.path.splitext(save_file)[0]}.toml")
     with open(
-        # os.path.join(
-        #     use_data_dir, kpoints_save_dir, f"{os.path.splitext(save_file)[0]}.toml"
-        # ),
         toml_path,
         "w",
     ) as f:

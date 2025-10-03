@@ -30,6 +30,21 @@ def video_montage(vids, ncols=2):
             row += height
     return montage
 
+fill_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+def fill_holes(depth_map, mouse_height_threshold=30, fill_kernel=fill_kernel, iterations=2):
+    # First, identify the mouse region using non-zero pixels
+    mouse_region = depth_map > mouse_height_threshold
+    expanded_mouse_region = cv2.dilate(
+        mouse_region.astype(np.uint8), fill_kernel, iterations=iterations
+    )
+
+    # Now find holes WITHIN the expanded mouse region
+    hole_mask = (depth_map == 0) & (expanded_mouse_region > 0)
+    if not np.any(hole_mask):
+        return depth_map
+    else:
+        return cv2.inpaint(depth_map, hole_mask.astype(np.uint8), 5, cv2.INPAINT_TELEA)
+
 def sos_filter(x, fps, tau=.01, order=3):
     sos = signal.butter(order, (1 / tau) / (fps / 2), btype="low", output="sos")
     return signal.sosfiltfilt(sos, x, axis=0)

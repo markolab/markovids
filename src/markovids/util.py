@@ -16,7 +16,8 @@ import numpy as np
 
 default_win_kwargs =  {"window": 20, "min_periods": 1, "center": True}
 def hampel(df, scale=.6745, threshold=3, replace=True, insert_nans=True, **kwargs):
-    use_kwargs = default_win_kwargs | kwargs
+    # use_kwargs = default_win_kwargs | kwargs # only in 3.9 >
+    use_kwargs = {**default_win_kwargs, **kwargs}
     new_df = df.copy()
     meds = df.rolling(**use_kwargs).median()
     devs = (df - meds).abs()

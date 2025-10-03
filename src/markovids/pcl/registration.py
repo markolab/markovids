@@ -114,12 +114,6 @@ def bundle_adjust_rigid_fixed_structure(
     rv_C0 = Rotation.from_matrix(R_C0).as_rotvec()
     x0 = np.hstack([rv_B0, t_B0, rv_C0, t_C0])
 
-    ######
-    from scipy.optimize._lsq.common import in_bounds
-
-    lb, ub = kwargs.get("bounds", (-np.inf * np.ones_like(x0), np.inf * np.ones_like(x0)))
-    ######
-
     result = least_squares(
         residuals_rigid,
         x0,
@@ -158,6 +152,41 @@ def invert_similarity_transform(R, t, s):
 # -----------------------------
 # Residuals: fixed structure + similarity
 # -----------------------------
+
+def estimate_similarity_transform(A, B):
+    assert A.shape == B.shape
+    N = A.shape[0]
+
+    # Compute centroids
+    centroid_A = np.mean(A, axis=0)
+    centroid_B = np.mean(B, axis=0)
+
+    # Center the points
+    AA = A - centroid_A
+    BB = B - centroid_B
+
+    # Compute covariance matrix
+    H = AA.T @ BB / N
+
+    # SVD
+    U, S, Vt = np.linalg.svd(H)
+    R = Vt.T @ U.T
+
+    # Reflection correction
+    if np.linalg.det(R) < 0:
+        Vt[-1, :] *= -1
+        R = Vt.T @ U.T
+
+    # Compute scale
+    var_A = np.var(AA, axis=0).sum()
+    s = (S @ np.ones(3)) / var_A
+
+    # Translation
+    t = centroid_B - s * R @ centroid_A
+
+    return s, R, t
+
+
 def residuals_similarity_fixed(x, points_A, points_B, points_C, weights_B, weights_C):
     rv_B = x[0:3]
     t_B = x[3:6]

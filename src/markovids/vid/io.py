@@ -164,6 +164,7 @@ class AviWriter:
         threads=6,
         slices=25,
         slicecrc=1,
+        prepend_args=None
     ):
         ext = os.path.splitext(filepath)[1]
         if ext != ".avi":
@@ -178,6 +179,7 @@ class AviWriter:
         self.frame_size = frame_size
         self.dtype = dtype
         self.pipe = None
+        self.prepend_args = prepend_args
 
     def open(self):
         command = [
@@ -209,7 +211,12 @@ class AviWriter:
             self.filepath,
         ]
 
-        self.pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
+        
+        full_cmd = " ".join(command)
+        if self.prepend_args is not None:
+            full_cmd = f"{self.prepend_args} ; {full_cmd}"
+
+        self.pipe = subprocess.Popen(full_cmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, executable='/bin/bash')
 
     def write_frames(self, frames, progress_bar=True):  # may need to enforce endianness...
         if self.pipe is None:
@@ -494,14 +501,16 @@ class AviReader:
         threads=None,
         intrinsic_matrix=None,
         distortion_coeffs=None,
+        prepend_args=None,
         **kwargs,
     ):
         self.filepath = filepath
         self.threads = threads
         self.intrinsic_matrix = intrinsic_matrix
         self.distortion_coeffs = distortion_coeffs
+        self.prepend_args = prepend_args
         self.get_file_info()
-
+        
     def open(self):
         pass
 
@@ -521,11 +530,15 @@ class AviReader:
             "-sexagesimal",
         ]
 
-        activate = "source ~/conda_activate"
+        # activate = "source ~/conda_activate"
         ffprobe_cmd = " ".join(command)
-        full_cmd = f"{activate} ; {ffprobe_cmd}"
+        
+        if self.prepend_args is None:
+            full_cmd = ffprobe_cmd
+        else:
+            full_cmd = f"{self.prepend_args} ; {ffprobe_cmd}"
 
-        ffmpeg = subprocess.Popen(full_cmd, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        ffmpeg = subprocess.Popen(full_cmd, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, executable='/bin/bash')
         out, err = ffmpeg.communicate()
         if err:
             print(err)
@@ -533,8 +546,8 @@ class AviReader:
         self.frame_size = (int(out[0]), int(out[1]))
         self.pixel_format = out[2]
         self.fps = float(out[3].split("/")[0]) / float(out[3].split("/")[1])
-        self.bit_depth = int(out[4])
-        self.nframes = int(out[5])
+        self.bit_depth = int(out[4]) if out[4] != "N/A" else 8 # TODO we will just default to 8 for now
+        self.nframes = int(out[5]) if out[5] != "N/A" else 200000 # TODO better handling
 
         if self.bit_depth == 16:
             self.dtype = np.dtype("<u2")
@@ -660,11 +673,16 @@ class AviReader:
             ]
         )
 
-        activate = "source ~/conda_activate"
+        # activate = "source ~/conda_activate"
         ffprobe_cmd = " ".join(command)
-        full_cmd = f"{activate} ; {ffprobe_cmd}"
 
-        pipe = subprocess.Popen(full_cmd, stderr=subprocess.PIPE, shell=True, stdout=subprocess.PIPE)
+        if self.prepend_args is None:
+            full_cmd = ffprobe_cmd
+        else:
+            full_cmd = f"{self.prepend_args} ; {ffprobe_cmd}"
+        # full_cmd = f"{activate} ; {ffprobe_cmd}"
+
+        pipe = subprocess.Popen(full_cmd, stderr=subprocess.PIPE, shell=True, stdout=subprocess.PIPE, executable='/bin/bash')
         out, err = pipe.communicate()
         if err:
             print("error", err)
@@ -818,182 +836,182 @@ def read_timestamps(path, tick_period=1e9, fill=False, fill_kwargs={}):
 # TODO: add frame_id match here, at high rates the system timestamp
 # will become unreliable...
 # TODO: make fill false here, we're just adding and dropping nans anyway...
-# def read_timestamps_multicam(
-#     path: dict, use_timestamp_field: str = "system_timestamp", merge_tolerance=0.0035, fill=True
-# ):
-#     from functools import reduce
-
-#     ts = {}
-#     for _path, _cam in path.items():
-#         # occassionally the filling logic will lead to weird
-#         # discontinuities, so sort timestamps after this...
-#         # alternatively, interpolate through other means...
-#         ts[_cam] = read_timestamps(
-#             _path,
-#             fill=fill,
-#             fill_kwargs={"use_timestamp_field": use_timestamp_field},
-#         ).rename(columns={"frame_index": _cam}).sort_values(use_timestamp_field)
-
-#     merged_ts = reduce(
-#         lambda left, right: pd.merge_asof(
-#             left,
-#             right,
-#             tolerance=merge_tolerance,
-#             on=use_timestamp_field,
-#             direction="nearest",
-#         ),
-#         ts.values(),
-#     )
-#     merged_ts.index = list(ts.values())[0].index
-
-#     return ts, merged_ts
-
-
-# TODO: flag for pushing fluorescence to next reflectance if needed...
 def read_timestamps_multicam(
-    path: dict,
-    use_timestamp_field: str = "device_timestamp_ref",
-    capture_number: str = "frame_id",
-    merge_tolerance: float = 0.002,
-    fill: bool = False,
-    multiplexed: bool = True,
-    return_equal_frames: bool = True,
-    burn_in: int = 300,
-    reference_camera: str = None,
-    return_full_sync_only: bool = True,
-    is_fluorescence_even: bool = True,
-    is_fluo_first: bool = False,
+    path: dict, use_timestamp_field: str = "system_timestamp", merge_tolerance=0.0035, fill=True
 ):
     from functools import reduce
-    import pandas as pd
 
-    # old strategy used system timestamps
-    # new strategy uses device timestamps after adjusting
-    # to a reference frame_id
-    #
-    # we assume that frame_id is exposure number with hw triggering
-    # thus frame_id = 200, e.g., should have the same timestamp across
-    # cameras
-    #
-    # we subtract of t(frame_id=200) from device_timestamps, then merge
     ts = {}
-    cameras = list(path.values())
-
-    # reference camera is the first by default
-    if reference_camera is None:
-        reference_camera = cameras[0]
     for _path, _cam in path.items():
+        # occassionally the filling logic will lead to weird
+        # discontinuities, so sort timestamps after this...
+        # alternatively, interpolate through other means...
         ts[_cam] = read_timestamps(
             _path,
             fill=fill,
             fill_kwargs={"use_timestamp_field": use_timestamp_field},
-        ).reset_index()
-        ts[_cam]["frame_id"] = ts[_cam]["frame_id"].astype("Int32")
-        ts[_cam]["frame_index"] = ts[_cam]["frame_index"].astype("Int32")
+        ).rename(columns={"frame_index": _cam}).sort_values(use_timestamp_field)
 
-    # find a common frame id after burn_in frames
-    # here, we assume the first 100-200 frames may have
-    # initialization issues typical with machine vision cams
-    sets = [set(ts[_cam]["frame_id"][ts[_cam]["frame_id"] >= burn_in]) for _cam in cameras]
-    common_ids = set.intersection(*sets)
-    reference_frame_id = int(min(common_ids))
+    merged_ts = reduce(
+        lambda left, right: pd.merge_asof(
+            left,
+            right,
+            tolerance=merge_tolerance,
+            on=use_timestamp_field,
+            direction="nearest",
+        ),
+        ts.values(),
+    )
+    merged_ts.index = list(ts.values())[0].index
 
-    # use the common id to get a device reference point for each camera...
-    for _cam in cameras:
-        idx = ts[_cam]["frame_id"] == reference_frame_id
-        val = ts[_cam].loc[idx]["device_timestamp"].iat[0]
-        ts[_cam]["device_timestamp_ref"] = ts[_cam]["device_timestamp"] - val
+    return ts, merged_ts
 
-    for _cam in cameras:
-        # normalize device timestamps after burn_in
-        cols = ts[_cam].columns
-        # only rename columns that are not use_timestamp_field
-        cols = pd.MultiIndex.from_tuples([(_cam, _col) for _col in cols])
-        cols = [_col if _col[1] != use_timestamp_field else _col[1] for _col in cols]
-        ts[_cam].columns = cols
 
-    if not multiplexed:
-        merged_ts = reduce(
-            lambda left, right: pd.merge_asof(
-                left,
-                right,
-                tolerance=merge_tolerance,
-                on=use_timestamp_field,
-                direction="nearest",
-            ),
-            ts.values(),
-        )
-        merged_ts.index = list(ts.values())[0].index
-        return ts, merged_ts
-    else:
-        # fluo is EVEN, reflect is ODD
-        # note that with original slow parameters
-        # it didn't matter of fluo was associated
-        # with prev or next frame, with faster FPS
-        # fluo must go with PREVIOUS reflectance
-        fluo_ts = {}
-        reflect_ts = {}
-        for k, v in ts.items():
-            # display(v)
-            if is_fluorescence_even:
-                fluo_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 0]
-                reflect_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 1]
-            else:
-                fluo_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 1]
-                reflect_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 0]
-        merged_fluo_ts = reduce(
-            lambda left, right: pd.merge_asof(
-                left, right, tolerance=merge_tolerance, on=use_timestamp_field, direction="nearest"
-            ),
-            fluo_ts.values(),
-        )
-        merged_fluo_ts.index = merged_fluo_ts[(reference_camera, "frame_id")].to_numpy()
-        merged_reflect_ts = reduce(
-            lambda left, right: pd.merge_asof(
-                left, right, tolerance=merge_tolerance, on=use_timestamp_field, direction="nearest"
-            ),
-            reflect_ts.values(),
-        )
-        merged_reflect_ts.index = merged_reflect_ts[(reference_camera, "frame_id")].to_numpy()
-        if return_full_sync_only:
+# TODO: flag for pushing fluorescence to next reflectance if needed...
+# def read_timestamps_multicam(
+#     path: dict,
+#     use_timestamp_field: str = "device_timestamp_ref",
+#     capture_number: str = "frame_id",
+#     merge_tolerance: float = 0.002,
+#     fill: bool = False,
+#     multiplexed: bool = True,
+#     return_equal_frames: bool = True,
+#     burn_in: int = 300,
+#     reference_camera: str = None,
+#     return_full_sync_only: bool = True,
+#     is_fluorescence_even: bool = True,
+#     is_fluo_first: bool = False,
+# ):
+#     from functools import reduce
+#     import pandas as pd
 
-            #
-            print(f"Dropping from fluorescence: {merged_fluo_ts.isnull().any(axis=1).sum()} (frames)")
-            print(f"Dropping from reflectance: {merged_fluo_ts.isnull().any(axis=1).sum()} (frames)")
-            print(f"Dropping from fluorescence: {merged_fluo_ts.isnull().any(axis=1).mean() * 1e2:.3f} (%)")
-            print(f"Dropping from reflectance: {merged_fluo_ts.isnull().any(axis=1).mean() * 1e2:.3f} (%)")
+#     # old strategy used system timestamps
+#     # new strategy uses device timestamps after adjusting
+#     # to a reference frame_id
+#     #
+#     # we assume that frame_id is exposure number with hw triggering
+#     # thus frame_id = 200, e.g., should have the same timestamp across
+#     # cameras
+#     #
+#     # we subtract of t(frame_id=200) from device_timestamps, then merge
+#     ts = {}
+#     cameras = list(path.values())
+
+#     # reference camera is the first by default
+#     if reference_camera is None:
+#         reference_camera = cameras[0]
+#     for _path, _cam in path.items():
+#         ts[_cam] = read_timestamps(
+#             _path,
+#             fill=fill,
+#             fill_kwargs={"use_timestamp_field": use_timestamp_field},
+#         ).reset_index()
+#         ts[_cam]["frame_id"] = ts[_cam]["frame_id"].astype("Int32")
+#         ts[_cam]["frame_index"] = ts[_cam]["frame_index"].astype("Int32")
+
+#     # find a common frame id after burn_in frames
+#     # here, we assume the first 100-200 frames may have
+#     # initialization issues typical with machine vision cams
+#     sets = [set(ts[_cam]["frame_id"][ts[_cam]["frame_id"] >= burn_in]) for _cam in cameras]
+#     common_ids = set.intersection(*sets)
+#     reference_frame_id = int(min(common_ids))
+
+#     # use the common id to get a device reference point for each camera...
+#     for _cam in cameras:
+#         idx = ts[_cam]["frame_id"] == reference_frame_id
+#         val = ts[_cam].loc[idx]["device_timestamp"].iat[0]
+#         ts[_cam]["device_timestamp_ref"] = ts[_cam]["device_timestamp"] - val
+
+#     for _cam in cameras:
+#         # normalize device timestamps after burn_in
+#         cols = ts[_cam].columns
+#         # only rename columns that are not use_timestamp_field
+#         cols = pd.MultiIndex.from_tuples([(_cam, _col) for _col in cols])
+#         cols = [_col if _col[1] != use_timestamp_field else _col[1] for _col in cols]
+#         ts[_cam].columns = cols
+
+#     if not multiplexed:
+#         merged_ts = reduce(
+#             lambda left, right: pd.merge_asof(
+#                 left,
+#                 right,
+#                 tolerance=merge_tolerance,
+#                 on=use_timestamp_field,
+#                 direction="nearest",
+#             ),
+#             ts.values(),
+#         )
+#         merged_ts.index = list(ts.values())[0].index
+#         return ts, merged_ts
+#     else:
+#         # fluo is EVEN, reflect is ODD
+#         # note that with original slow parameters
+#         # it didn't matter of fluo was associated
+#         # with prev or next frame, with faster FPS
+#         # fluo must go with PREVIOUS reflectance
+#         fluo_ts = {}
+#         reflect_ts = {}
+#         for k, v in ts.items():
+#             # display(v)
+#             if is_fluorescence_even:
+#                 fluo_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 0]
+#                 reflect_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 1]
+#             else:
+#                 fluo_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 1]
+#                 reflect_ts[k] = v.loc[np.mod(v[k, "frame_id"], 2) == 0]
+#         merged_fluo_ts = reduce(
+#             lambda left, right: pd.merge_asof(
+#                 left, right, tolerance=merge_tolerance, on=use_timestamp_field, direction="nearest"
+#             ),
+#             fluo_ts.values(),
+#         )
+#         merged_fluo_ts.index = merged_fluo_ts[(reference_camera, "frame_id")].to_numpy()
+#         merged_reflect_ts = reduce(
+#             lambda left, right: pd.merge_asof(
+#                 left, right, tolerance=merge_tolerance, on=use_timestamp_field, direction="nearest"
+#             ),
+#             reflect_ts.values(),
+#         )
+#         merged_reflect_ts.index = merged_reflect_ts[(reference_camera, "frame_id")].to_numpy()
+#         if return_full_sync_only:
+
+#             #
+#             print(f"Dropping from fluorescence: {merged_fluo_ts.isnull().any(axis=1).sum()} (frames)")
+#             print(f"Dropping from reflectance: {merged_fluo_ts.isnull().any(axis=1).sum()} (frames)")
+#             print(f"Dropping from fluorescence: {merged_fluo_ts.isnull().any(axis=1).mean() * 1e2:.3f} (%)")
+#             print(f"Dropping from reflectance: {merged_fluo_ts.isnull().any(axis=1).mean() * 1e2:.3f} (%)")
             
-            merged_fluo_ts = merged_fluo_ts.dropna()
-            merged_reflect_ts = merged_reflect_ts.dropna()
-        if return_equal_frames:
-            # remember, we want the reflectance frames that came BEFORE fluorescence
-            # especially with faster timestamps this can make a big diff in timing
-            if is_fluo_first:
-                adjustment = + 1
-            else:
-                adjustment = - 1
+#             merged_fluo_ts = merged_fluo_ts.dropna()
+#             merged_reflect_ts = merged_reflect_ts.dropna()
+#         if return_equal_frames:
+#             # remember, we want the reflectance frames that came BEFORE fluorescence
+#             # especially with faster timestamps this can make a big diff in timing
+#             if is_fluo_first:
+#                 adjustment = + 1
+#             else:
+#                 adjustment = - 1
                 
-            adjusted_idx = merged_fluo_ts.index + adjustment
-            common_idx = merged_reflect_ts.index.intersection(adjusted_idx)
-            merged_reflect_ts = merged_reflect_ts.loc[common_idx]
-            merged_fluo_ts = merged_fluo_ts.loc[common_idx - adjustment]
+#             adjusted_idx = merged_fluo_ts.index + adjustment
+#             common_idx = merged_reflect_ts.index.intersection(adjusted_idx)
+#             merged_reflect_ts = merged_reflect_ts.loc[common_idx]
+#             merged_fluo_ts = merged_fluo_ts.loc[common_idx - adjustment]
 
-            error_reflect_to_fluo = (
-                merged_fluo_ts[use_timestamp_field].values - merged_reflect_ts[use_timestamp_field].values
-            )
-            error_fluo_to_reflect = (
-                merged_reflect_ts[use_timestamp_field].values[1:] - merged_fluo_ts[use_timestamp_field].values[:-1]
-            )
+#             error_reflect_to_fluo = (
+#                 merged_fluo_ts[use_timestamp_field].values - merged_reflect_ts[use_timestamp_field].values
+#             )
+#             error_fluo_to_reflect = (
+#                 merged_reflect_ts[use_timestamp_field].values[1:] - merged_fluo_ts[use_timestamp_field].values[:-1]
+#             )
 
-            print(f"Average gap from exposure start reflect to fluo: {error_reflect_to_fluo.mean():.4f} (secs)")
-            print(f"Average gap from exposure start fluo to reflect: {error_fluo_to_reflect.mean():.4f} (secs)")
-            print(f"Average FPS for fluorescence: {1 / merged_fluo_ts[use_timestamp_field].diff().mean():.3f}")
-            print(f"Average FPS for reflectance: {1 / merged_reflect_ts[use_timestamp_field].diff().mean():.3f}")
+#             print(f"Average gap from exposure start reflect to fluo: {error_reflect_to_fluo.mean():.4f} (secs)")
+#             print(f"Average gap from exposure start fluo to reflect: {error_fluo_to_reflect.mean():.4f} (secs)")
+#             print(f"Average FPS for fluorescence: {1 / merged_fluo_ts[use_timestamp_field].diff().mean():.3f}")
+#             print(f"Average FPS for reflectance: {1 / merged_reflect_ts[use_timestamp_field].diff().mean():.3f}")
 
-            # print number of dropped frames?
+#             # print number of dropped frames?
 
-            # merged_fluo_ts = merge
-        return fluo_ts, reflect_ts, merged_fluo_ts, merged_reflect_ts
+#             # merged_fluo_ts = merge
+#         return fluo_ts, reflect_ts, merged_fluo_ts, merged_reflect_ts
 
 
 def inscribe_text(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, text_pos=(30, 30)):
