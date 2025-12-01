@@ -11,6 +11,7 @@ import pandas as pd
 from markovids import depth, vid, pcl, util
 from markovids.pcl.post_processing import post_processing
 from collections import defaultdict
+from pathlib import Path
 
 def nan_safe_linalg_norm(arr1, arr2, axis=1):
     """
@@ -67,7 +68,6 @@ def get_bground_vals(keyps, _cam, bground_by_cam, width=640, height=480):
     
     return bground_vals
 
-from pathlib import Path
 
 def get_processing_params(cable):
     postprocessing_params = {}
@@ -141,6 +141,7 @@ def get_processing_params(cable):
 
 # defaults...
 reference_camera = "Lucid Vision Labs-HTP003S-001-224500508"
+
 incl_kpoints_fit_transform = [
     "back_bottom",
     "back_middle_lower",
@@ -244,29 +245,34 @@ def registration_pipeline(
     mp4_burn_in=50,
     save_file="merged_keypoints.h5",
     alt_save_dir=None,
+    alt_save_name=None,
     meta_path = None,
     cable=False,
     constrain_bones=True,
     impute_pca=True,
-    regularize_temporal=True
+    regularize_temporal=True,
+    postprocessing_params = None,
 ):
 
     if alt_save_dir:
-        output_path = os.path.join(alt_save_dir, kpoints_save_dir)
-        os.makedirs(os.path.join(alt_save_dir, kpoints_save_dir), exist_ok=True)
+        if alt_save_name is not None:
+            output_path = os.path.join(alt_save_dir, alt_save_name)
+        else:
+            output_path = os.path.join(alt_save_dir, kpoints_save_dir)
+        os.makedirs(output_path, exist_ok=True)
     else:
         output_path = os.path.join(use_data_dir, kpoints_save_dir)
         
-    # if os.path.exists(os.path.join(output_path, save_file)): # already been processed
-    #     print(f"{os.path.join(output_path, save_file)} exists, previously processed. Exiting...")
-    #     return None
-
     if (intrinsics_matrix is None) or (distortion_coefficients is None):
         raise RuntimeError(
             "Need intrinsics and distortion_coefficients dictionaries to continue"
         )
 
-    postprocessing_params = get_processing_params(cable)    
+    if postprocessing_params is None:
+        postprocessing_params = get_processing_params(cable)    
+    else:
+        print("using: ", postprocessing_params)
+        print("version dir: ", kpoints_save_dir)
 
     # Camera intrinsics
     cx = intrinsics_matrix[reference_camera][0, 2]
@@ -285,27 +291,9 @@ def registration_pipeline(
         warnings.warn(f"Did not find metadata file {metadata_file}")
         return None
 
-    width = metadata["camera_metadata"][reference_camera]["Width"] # are these swapped
+    width = metadata["camera_metadata"][reference_camera]["Width"]
     height = metadata["camera_metadata"][reference_camera]["Height"]
-    # # Load background to compute the floor plane
-    # bground_file = os.path.join(use_data_dir, "_bground", f"{reference_camera}.tiff")
 
-    # try:
-    #     bground = tifffile.imread(bground_file)
-    # except FileNotFoundError as e:
-    #     warnings.warn(f"Did not find background file {bground_file}")
-    #     return None
-
-    # bground_roi = depth.plane.get_floor(bground.astype("float"), dilations=0)
-
-    # kernel = cv2.getStructuringElement(
-    #     cv2.MORPH_ELLIPSE, (bground_erode_px, bground_erode_px)
-    # )  # erode walls, etc.
-    # use_bground_roi = cv2.erode(
-    #     bground_roi, kernel
-    # )  # erode so we only get a big chunk of the middle
-
-    # floor_distance = np.median(bground[use_bground_roi]) / 4.0
     bground_by_cam = {}
     floor_dist_cam = {}
 
@@ -339,9 +327,6 @@ def registration_pipeline(
 
     nbody_parts = len(kpoints_metadata["node_names"])
 
-    ts_paths = {os.path.join(use_data_dir, f"{_cam}.txt"): _cam for _cam in cameras}
-    ts, merged_ts = vid.io.read_timestamps_multicam(ts_paths, merge_tolerance=0.0035)
-
     kpoints_dat = {}
     for _cam in cameras:
         kpoints_dat[_cam] = joblib.load(
@@ -371,14 +356,6 @@ def registration_pipeline(
         
         # Update z-coordinates
         kpoints_dat[_cam][...,2] = -1 * kpoints_dat[_cam][...,2] + bground_vals
-
-    # TODO won't need this with proc ...
-    # only include fully sync'd data...
-    use_frames = merged_ts.dropna().astype(np.int) #TODO more elegant way to get timestamps
-
-    # syncing...
-    # for _cam in cameras:
-    #     kpoints_dat[_cam] = kpoints_dat[_cam][use_frames[_cam]]
 
     n_frames, nbody_parts, dims = kpoints_dat[reference_camera].shape
 
@@ -411,10 +388,6 @@ def registration_pipeline(
         kpoints_metadata["node_names"].index(_incl)
         for _incl in incl_kpoints_fit_transform
     ]
-    
-    #TODO Some cameras can stop early?
-    # for _cam in kpoints_dat:
-    #     print(f"{_cam} has shape {kpoints_dat[_cam].shape}")
 
     use_points = []
     use_points_cam = [reference_camera]
@@ -477,20 +450,6 @@ def registration_pipeline(
         for _frame in range(nframes):
             rem = np.isnan(proj_points[i][_frame]).any(axis=-1)
             proj_points[i][_frame][rem, :] = np.nan
-    
-    # per-frame adjustment : bundle adjustment assumes constant rigid transform, but some errors in alignment may occur
-    # for i, _cam in enumerate(cameras):
-    #     if _cam == reference_camera:
-    #         continue
-    #     use_points = proj_points[i]
-    #     ref_points = proj_points[ref_index]
-    #     for _frame in range(nframes):
-    #         with warnings.catch_warnings():
-    #             warnings.filterwarnings("ignore", category=RuntimeWarning)
-    #             bias = np.nanmean(use_points[_frame] - ref_points[_frame], axis=0)[:3] # some points may be off
-    #         # any nans should be replaced by most recent bias term...
-    #         bias[np.isnan(bias)] = 0
-    #         proj_points[i][_frame, :, :3] -= bias[None, :]
 
     for i, _cam in enumerate(cameras):
         if _cam == reference_camera:
@@ -529,36 +488,6 @@ def registration_pipeline(
 
                 # Apply the bias correction to all keypoints in the current frame
                 proj_points[i][_frame, :, :3] -= bias[None, :]
-
-    # merge data via a weighted average
-    # merge_method = "weighted"
-    # merged_data = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
-    # merged_conf = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
-    # for i in range(len(cameras)):
-    #     merged_conf[:, :, i] = proj_points[i, :, :, 3]
-    # for _frame in range(nframes):
-    #     weights = proj_points[:, _frame, :, 3][..., None]
-    #     weights = util.squash_conf(
-    #         weights, min_cutoff=min_confidence
-    #     )  # soft threshold the weights
-    #     # merged_conf[_frame] = proj_points
-    #     if merge_method == "weighted":
-    #         with warnings.catch_warnings():
-    #             warnings.filterwarnings("ignore", category=RuntimeWarning)
-    #             weighted_average = np.nansum(
-    #                 (proj_points[:, _frame, :, :3] * weights), axis=0
-    #             ) / np.nansum(weights, axis=0)
-    #         merged_data[_frame] = weighted_average
-    #     elif merge_method == "max":
-    #         for i in range(nbody_parts):
-    #             try:
-    #                 use_cam = np.nanargmax(proj_points[:, _frame, i, 3], axis=0)
-    #             except ValueError:
-    #                 continue
-    #             merged_data[_frame, i, :] = proj_points[use_cam, _frame, i, :3]
-
-    # all_keypoints = kpoints_metadata["node_names"]
-    # not_noisy_keypoints = list(set(all_keypoints).difference(noisy_keypoints))
 
     # merge data via a weighted average
     merge_method = "mixed"
@@ -629,53 +558,12 @@ def registration_pipeline(
     all_keypoints = kpoints_metadata["node_names"]
     not_noisy_keypoints = list(set(all_keypoints).difference(noisy_keypoints))
 
-
-    '''
-        Hampel Filter to remove outliers and interpolate before addtl post processing
-    '''
-
-    # _test = pd.DataFrame(merged_data.reshape(-1, nbody_parts * 3))  # ONLY SMOOTH XYZ
-    # if hampel_params is not None:
-    #     _test = util.hampel(_test, **hampel_params)
-    # if interpolate is not None:
-    #     _test = _test.interpolate(
-    #         method="linear",
-    #         limit=interpolate,
-    #         axis=0,
-    #         limit_direction="both",
-    #         limit_area="inside",
-    #     )
-    # if smoothing_params is not None:
-    #     for _noisy in noisy_keypoints:
-    #         match = _test.filter(regex=_noisy, axis=1)
-    #         _test[match] = _test.apply(
-    #             lambda x: util.savgol_filter_missing(x, **smoothing_params["noisy"])
-    #         )
-    #     for _not_noisy in not_noisy_keypoints:
-    #         match = _test.filter(regex=_not_noisy, axis=1)
-    #         _test[match] = _test.apply(
-    #             lambda x: util.savgol_filter_missing(x, **smoothing_params["not_noisy"])
-    #         )
-
-    # merged_data_proc = _test.to_numpy().reshape(-1, nbody_parts, 3)
-
     '''
         Begin additional post-processing
     '''
-    # merged_data will be post-processed    
 
-    # merged_data_proj = pcl.io.project_world_coordinates(
-    #     merged_data.reshape(-1, 3),
-    #     floor_distance=floor_distance,
-    #     cx=cx,
-    #     cy=cy,
-    #     fx=fx,
-    #     fy=fy,
-    #     z_scale=1.0,
-    # ).reshape(-1, nbody_parts, 3)
-
-    merged_data_proc = merged_data.copy() #TODO change if don't want hampel
-    merged_conf_proc = merged_conf.copy() # TODO we need to better think about this
+    merged_data_proc = merged_data.copy() 
+    merged_conf_proc = merged_conf.copy()
 
     if any([constrain_bones, impute_pca, regularize_temporal]):
         final_smoothed, final_conf = post_processing(
@@ -707,29 +595,10 @@ def registration_pipeline(
         kpoints_metadata["node_names"].index(_incl) for _incl in plt_kpoints
     ]
 
-    #TODO UPDATE THIS CODE
     # save smoothed and raw after projecting into world coordinates (mm)...
     merged_data_proj_smooth = merged_data_proc.copy()
-    # pcl.io.project_world_coordinates(
-    #     merged_data_proc.reshape(-1, 3),
-    #     floor_distance=floor_distance,
-    #     cx=cx,
-    #     cy=cy,
-    #     fx=fx,
-    #     fy=fy,
-    #     z_scale=z_scale,
-    # ).reshape(-1, nbody_parts, 3)
 
-    merged_data_proj_raw = merged_data.copy() #
-    # pcl.io.project_world_coordinates(
-    #     merged_data.reshape(-1, 3),
-    #     floor_distance=floor_distance,
-    #     cx=cx,
-    #     cy=cy,
-    #     fx=fx,
-    #     fy=fy,
-    #     z_scale=z_scale,
-    # ).reshape(-1, nbody_parts, 3) #TODO we drop 1 bodypart
+    merged_data_proj_raw = merged_data.copy()
 
     all_bgrounds = {}
 
@@ -756,7 +625,9 @@ def registration_pipeline(
         z_scale=z_scale,
     )
 
-    timestamps = use_frames["system_timestamp"].to_numpy()
+    timestamp_path = os.path.join(use_data_dir, "_proc", "timestamps.txt")
+    df = pd.read_csv(timestamp_path)
+    df.columns = df.columns.str.replace(r"[()',]", "", regex=True).str.replace(" ", "_")
 
     with h5py.File(os.path.join(output_path, save_file), "w") as f:
         f.create_dataset(
@@ -771,7 +642,7 @@ def registration_pipeline(
         )
         f.create_dataset(
             "merged_keypoints_confidence",
-            data=merged_conf_proc.astype("float32"), # merged_conf.astype("float32"),
+            data=merged_conf_proc.astype("float32"),
             compression="gzip",
         )
         f.create_dataset(
@@ -785,19 +656,19 @@ def registration_pipeline(
             compression="gzip",
         )
 
-        for _col in use_frames.columns:
-            f.create_dataset(
-                f"index/{_col}",
-                data=use_frames[_col].to_numpy(),
-                compression="gzip"
-            )
+        # for _col in use_frames.columns:
+        #     f.create_dataset(
+        #         f"index/{_col}",
+        #         data=use_frames[_col].to_numpy(),
+        #         compression="gzip"
+        #     )
 
-        f.create_dataset(f"index/frame_id",
-                         data=use_frames.index.to_numpy(),
-                         compression="gzip")
+        # f.create_dataset(f"index/frame_id",
+        #                  data=use_frames.index.to_numpy(),
+        #                  compression="gzip")
         
         f.create_dataset(
-            "timestamps", data=timestamps.astype("float64"), compression="gzip"
+            "device_timestamp_ref", data=df["device_timestamp_ref"], compression="gzip"
         )
         f.create_dataset("roi", data=bground_roi, compression="gzip")
         f.create_dataset("roi_merged", data=all_roi_points_proj, compression="gzip")
