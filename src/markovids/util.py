@@ -37,6 +37,24 @@ def hampel(df, scale=.6745, threshold=3, replace=True, insert_nans=True, **kwarg
 def squash_conf(conf, gamma=2, min_cutoff=0.05):
     return np.where(conf > min_cutoff, conf ** gamma, 0)
 
+def squash_conf_dynamic(conf, cutoff_dict, default_cutoff=0.05, gamma=2):
+    """
+    conf: (frames, keypoints, dims) -> e.g. (3, 14, 1)
+    cutoff_dict: {index: value} -> e.g. {0: 0.1, 3: 0.8}
+    default_cutoff: Value to use for indices not present in the dict
+    """
+    n_points = conf.shape[1]
+    
+    cutoff_array = np.full(n_points, default_cutoff)
+    
+    for idx, val in cutoff_dict.items():
+        if 0 <= idx < n_points:
+            cutoff_array[idx] = val
+            
+    cutoff_array = cutoff_array.reshape(1, -1, 1)
+    
+    return np.where(conf > cutoff_array, conf ** gamma, 0)
+
 def savgol_filter_missing(x, window_length=7, poly_order=2):
     from scipy.signal import savgol_filter
     import pandas as pd

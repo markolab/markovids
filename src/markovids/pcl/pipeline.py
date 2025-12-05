@@ -13,6 +13,23 @@ from markovids.pcl.post_processing import post_processing
 from collections import defaultdict
 from pathlib import Path
 
+def load_config(config_path):
+    """
+    Loads configuration from a TOML file.
+    """
+    if config_path is None or not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found at: {config_path}")
+    
+    with open(config_path, "r") as f:
+        config = toml.load(f)
+    
+    # Post-processing: TOML keys are always strings, but your code might expect integers.
+    # Convert 'index_conf_map' keys back to integers.
+    if "index_conf_map" in config:
+        config["index_conf_map"] = {int(k): v for k, v in config["index_conf_map"].items()}
+        
+    return config
+
 def nan_safe_linalg_norm(arr1, arr2, axis=1):
     """
     Compute L2 norm between two arrays, handling NaN values safely.
@@ -73,7 +90,6 @@ def get_processing_params(cable):
     postprocessing_params = {}
     if cable:
         postprocessing_params["temporal_regularization"] = {
-            "fps": fps,
             "lambda_jerk": 3e-8,
             "lambda_snap": 0,
             "lambda_velocity": 0,
@@ -109,10 +125,10 @@ def get_processing_params(cable):
             "window_length": 7,
             "polyorder": 3,
         }
+        
     else:
         postprocessing_params = {}
         postprocessing_params["temporal_regularization"] = {
-            "fps": fps,
             "lambda_jerk": 1e-8,
             "lambda_snap": 0,
             "lambda_velocity": 0,
@@ -139,107 +155,16 @@ def get_processing_params(cable):
 
     return postprocessing_params
 
-# defaults...
-reference_camera = "Lucid Vision Labs-HTP003S-001-224500508"
-
-incl_kpoints_fit_transform = [
-    "back_bottom",
-    "back_middle_lower",
-    "back_middle_upper",
-    "back_top",
-    "left_hip",
-    "right_hip",
-    "left_shoulder",
-    "right_shoulder",
-]
-
-incl_kpoints_post_processing = [
-    "tail_tip",
-    "tail_middle",
-    "tail_base",
-    "back_bottom",
-    "back_middle_lower",
-    "back_middle_upper",
-    "back_top",
-    "left_hip",
-    "right_hip",
-    "left_shoulder",
-    "right_shoulder",
-    "left_ear",
-    "right_ear",
-    "snout"
-]
-
-plt_kpoints = [
-    "tail_tip",
-    "tail_middle",
-    "tail_base",
-    "back_bottom",
-    "back_middle_lower",
-    "back_middle_upper",
-    "back_top",
-    "left_hip",
-    "right_hip",
-    "left_shoulder",
-    "right_shoulder",
-]
-
-noisy_keypoints = ["tail_tip", "tail_middle", "tail_base", "snout"]
-
-# we may need more aggressive filtering with cables present...
-smoothing_params = {
-    "not_noisy": {"window_length": int(5), "poly_order": int(2)},
-    "noisy": {"window_length": int(25), "poly_order": int(2)},
-}
-hampel_params = {
-    "window": 100,
-    "threshold": 2.5,
-    "replace": False,
-
-}
-interpolate = 10
-renderer_kwargs = {
-    "trail_length": 5,
-    "xlim": (-300, 300),
-    "ylim": (-300, 300),
-    "zlim": (-10, 105),
-    # "elevation": 30,
-    # "azimuth": 65,
-}
-
-skeleton = [
-    ("tail_tip", "tail_middle"),
-    ("tail_middle", "tail_base"),
-    ("back_middle_lower", "back_middle_upper"),
-    ("back_middle_upper", "back_top"),
-    ("left_ear", "right_ear"),
-    ("left_shoulder", "right_shoulder"),
-    ("left_hip", "right_hip"),
-    ("back_top", "left_shoulder"),
-    ("back_top", "right_shoulder"),
-    ("back_bottom", "left_hip"),
-    ("back_bottom", "right_hip"),
-    ("snout", "left_ear"),
-    ("snout", "right_ear")
-]
-
-fps=100
 
 def registration_pipeline(
+    config_path,
     use_data_dir,
     kpoints_save_dir="_kpoints_v0_3d",
-    reference_camera=reference_camera,
     intrinsics_matrix=None,
     distortion_coefficients=None,
     bground_erode_px=60,
-    smoothing_params=smoothing_params,
-    hampel_params=hampel_params,
-    noisy_keypoints=noisy_keypoints,
     min_confidence=0.4,
-    interpolate=10,
     z_scale=1.0,
-    incl_kpoints_fit_transform=incl_kpoints_fit_transform,
-    plt_kpoints=plt_kpoints,
     mp4_max_render_frames=None,
     mp4_renderer="vedo",
     mp4_burn_in=50,
@@ -252,7 +177,24 @@ def registration_pipeline(
     impute_pca=True,
     regularize_temporal=True,
     postprocessing_params = None,
+    render=False
 ):
+    
+    # 1. Load Global Variables from Config
+    cfg = load_config(config_path)
+    
+    # Extract variables to local scope
+    reference_camera = cfg["reference_camera"]
+    smoothing_params = cfg["smoothing_params"]
+    hampel_params = cfg["hampel_params"]
+    noisy_keypoints = cfg["noisy_keypoints"]
+    incl_kpoints_fit_transform = cfg["incl_kpoints_fit_transform"]
+    plt_kpoints = cfg["plt_kpoints"]
+    skeleton = [tuple(item) for item in cfg["skeleton"]]
+    fps = cfg["fps"]
+    index_conf_map = cfg["index_conf_map"]
+    renderer_kwargs = cfg["renderer_kwargs"]
+    incl_kpoints_post_processing = cfg["incl_kpoints_post_processing"]
 
     if alt_save_dir:
         if alt_save_name is not None:
@@ -498,12 +440,13 @@ def registration_pipeline(
     for i in range(len(cameras)):
         merged_conf[:, :, i] = proj_points[i, :, :, 3]
     for _frame in range(nframes):
-        weights = proj_points[:, _frame, :, 3][..., None]
-        weights = util.squash_conf(
-            weights, min_cutoff=min_confidence
-        )  # soft threshold the weights
+        # soft threshold the weights
         # merged_conf[_frame] = proj_points
         if merge_method == "weighted":
+            weights = proj_points[:, _frame, :, 3][..., None]
+            weights = util.squash_conf_dynamic(
+                weights, index_conf_map
+            )
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
                 weighted_average = np.nansum(
@@ -543,7 +486,10 @@ def registration_pipeline(
                 # Use a weighted average of valid points
                 valid_keypoints = proj_points[valid_mask, _frame, i, :3]
                 valid_confidences = confidences[valid_mask]
-                weights = util.squash_conf(valid_confidences[..., None], min_cutoff=min_confidence)
+
+                part_cutoff = index_conf_map.get(i, 0.05) 
+                weights = np.where(valid_confidences > part_cutoff, valid_confidences**2, 0)
+                weights = weights[:, None] 
 
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -694,29 +640,30 @@ def registration_pipeline(
     ) as f:
         toml.dump(metadata, f, encoder=toml.TomlNumpyEncoder())
 
-    if mp4_max_render_frames is not None:
-        max_render_frames = np.minimum(mp4_max_render_frames, nframes)
-    else:
-        max_render_frames = nframes
-    arr_slice = slice(mp4_burn_in, max_render_frames)
-    frame_ids = range(mp4_burn_in, max_render_frames)
-    movie_file = f"{os.path.splitext(save_file)[0]}.mp4"
+    if render:
+        if mp4_max_render_frames is not None:
+            max_render_frames = np.minimum(mp4_max_render_frames, nframes)
+        else:
+            max_render_frames = nframes
+        arr_slice = slice(mp4_burn_in, max_render_frames)
+        frame_ids = range(mp4_burn_in, max_render_frames)
+        movie_file = f"{os.path.splitext(save_file)[0]}.mp4"
 
-    if mp4_renderer == "matplotlib":
-        pcl.viz.visualize_xyz_trajectories_to_mp4(
-            merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
-            os.path.join(output_path,movie_file),
-            fps=100,
-            frame_ids=frame_ids,
-            **renderer_kwargs,
-        )
-    elif mp4_renderer == "vedo":
-        pcl.viz.visualize_xyz_trajectories_vedo(
-            merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
-            os.path.join(output_path, movie_file),
-            fps=100,
-            frame_ids=frame_ids,
-            **renderer_kwargs,
-        )
-    else:
-        pass
+        if mp4_renderer == "matplotlib":
+            pcl.viz.visualize_xyz_trajectories_to_mp4(
+                merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
+                os.path.join(output_path,movie_file),
+                fps=100,
+                frame_ids=frame_ids,
+                **renderer_kwargs,
+            )
+        elif mp4_renderer == "vedo":
+            pcl.viz.visualize_xyz_trajectories_vedo(
+                merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
+                os.path.join(output_path, movie_file),
+                fps=100,
+                frame_ids=frame_ids,
+                **renderer_kwargs,
+            )
+        else:
+            pass
