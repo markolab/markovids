@@ -173,9 +173,6 @@ def registration_pipeline(
     alt_save_name=None,
     meta_path = None,
     cable=False,
-    constrain_bones=True,
-    impute_pca=True,
-    regularize_temporal=True,
     postprocessing_params = None,
     render=False
 ):
@@ -195,6 +192,10 @@ def registration_pipeline(
     index_conf_map = cfg["index_conf_map"]
     renderer_kwargs = cfg["renderer_kwargs"]
     incl_kpoints_post_processing = cfg["incl_kpoints_post_processing"]
+
+    constrain_bones = cfg["constrain_bones"]
+    impute_pca = cfg["impute_pca"]
+    regularize_temporal = cfg["regularize_temporal"]
 
     if alt_save_dir:
         if alt_save_name is not None:
@@ -531,7 +532,10 @@ def registration_pipeline(
         ]
 
         merged_data_proc[:, incl_kpoints_post_proc_idx] = final_smoothed
-    # merged_conf_proc[:, incl_kpoints_post_proc_idx] = final_conf
+    else:
+        print("No post processing will be done...")
+        final_conf = np.zeros_like(merged_conf)
+
 
     '''
         End additional post-processing
