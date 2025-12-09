@@ -86,76 +86,6 @@ def get_bground_vals(keyps, _cam, bground_by_cam, width=640, height=480):
     return bground_vals
 
 
-def get_processing_params(cable):
-    postprocessing_params = {}
-    if cable:
-        postprocessing_params["temporal_regularization"] = {
-            "lambda_jerk": 3e-8,
-            "lambda_snap": 0,
-            "lambda_velocity": 0,
-            "lambda_accel": 1e-8,
-            "max_gap_fill": 30,
-        }
-        postprocessing_params["bone_length_regularization"] = {
-            "correction_rate": 0.75,  # with cable
-            "iterations": 10,
-            "violation_threshold": 1.5,
-        }
-        postprocessing_params["pca"] = {
-            "n_components": 5,  # with cable
-            "n_iterations": 30
-        }
-        postprocessing_params["align"] = {
-            "exclude_from_center": ["snout", "tail_base", "tail_middle", "tail_tip", "left_ear", "right_ear"],
-            "use_median_centering": True,
-        }
-        postprocessing_params["align_compute"] = {
-            "alignment_window": 11,
-            "smooth_alignment": True
-        }
-        postprocessing_params["post_align_hampel"] = {
-            "window_size": 7,
-            "n_sigmas": 3
-        }
-        postprocessing_params["post_align_imputed_smoothing"] = {
-            "sigma": 2.5,
-            "medfilt_kernel": 5
-        }
-        postprocessing_params["post_align_sgolay"] = {
-            "window_length": 7,
-            "polyorder": 3,
-        }
-        
-    else:
-        postprocessing_params = {}
-        postprocessing_params["temporal_regularization"] = {
-            "lambda_jerk": 1e-8,
-            "lambda_snap": 0,
-            "lambda_velocity": 0,
-            "lambda_accel": 1e-9,
-            "max_gap_fill": 30,
-        }
-        postprocessing_params["bone_length_regularization"] = {
-            "correction_rate": 0.5,  # with cable
-            "iterations": 10,
-            "violation_threshold": 1.5,
-        }
-        postprocessing_params["pca"] = {"n_components": 8, "n_iterations": 30}  # with cable
-        postprocessing_params["align"] = {
-            "exclude_from_center": ["snout", "tail_base", "tail_middle", "tail_tip", "left_ear", "right_ear"],
-            "use_median_centering": True,
-        }
-        postprocessing_params["align_compute"] = {"alignment_window": 11, "smooth_alignment": True}
-        postprocessing_params["post_align_hampel"] = {"window_size": 7, "n_sigmas": 3}
-        postprocessing_params["post_align_imputed_smoothing"] = {"sigma": 2.5, "medfilt_kernel": 5}
-        postprocessing_params["post_align_sgolay"] = {
-            "window_length": 5,
-            "polyorder": 3,
-        }
-
-    return postprocessing_params
-
-
 def registration_pipeline(
     config_path,
     use_data_dir,
@@ -172,8 +102,6 @@ def registration_pipeline(
     alt_save_dir=None,
     alt_save_name=None,
     meta_path = None,
-    cable=False,
-    postprocessing_params = None,
     render=False
 ):
     
@@ -182,8 +110,10 @@ def registration_pipeline(
     
     # Extract variables to local scope
     reference_camera = cfg["reference_camera"]
-    smoothing_params = cfg["smoothing_params"]
-    hampel_params = cfg["hampel_params"]
+
+    # smoothing_params = cfg["smoothing_params"]
+    # hampel_params = cfg["hampel_params"]
+
     noisy_keypoints = cfg["noisy_keypoints"]
     incl_kpoints_fit_transform = cfg["incl_kpoints_fit_transform"]
     plt_kpoints = cfg["plt_kpoints"]
@@ -191,11 +121,21 @@ def registration_pipeline(
     fps = cfg["fps"]
     index_conf_map = cfg["index_conf_map"]
     renderer_kwargs = cfg["renderer_kwargs"]
-    incl_kpoints_post_processing = cfg["incl_kpoints_post_processing"]
 
     constrain_bones = cfg["constrain_bones"]
     impute_pca = cfg["impute_pca"]
     regularize_temporal = cfg["regularize_temporal"]
+
+    postprocessing_params = cfg["post_processing"]
+
+    # Extract the list of keypoints (and remove from dict to keep it clean)
+    incl_kpoints_post_processing = postprocessing_params.pop("incl_kpoints_post_processing")
+
+    # Inject FPS dynamically
+    if "temporal_regularization" in postprocessing_params:
+        postprocessing_params["temporal_regularization"]["fps"] = fps
+        
+    print(f"Loaded post-processing params from {config_path}")
 
     if alt_save_dir:
         if alt_save_name is not None:
@@ -210,12 +150,6 @@ def registration_pipeline(
         raise RuntimeError(
             "Need intrinsics and distortion_coefficients dictionaries to continue"
         )
-
-    if postprocessing_params is None:
-        postprocessing_params = get_processing_params(cable)    
-    else:
-        print("using: ", postprocessing_params)
-        print("version dir: ", kpoints_save_dir)
 
     # Camera intrinsics
     cx = intrinsics_matrix[reference_camera][0, 2]
