@@ -100,9 +100,9 @@ def registration_pipeline(
     mp4_burn_in=50,
     save_file="merged_keypoints.h5",
     alt_save_dir=None,
-    alt_save_name=None,
     meta_path = None,
-    render=False
+    render=False,
+    bundle_adjust=False
 ):
     
     # 1. Load Global Variables from Config
@@ -137,15 +137,21 @@ def registration_pipeline(
         
     print(f"Loaded post-processing params from {config_path}")
 
-    if alt_save_dir:
-        if alt_save_name is not None:
-            output_path = os.path.join(alt_save_dir, alt_save_name)
-        else:
-            output_path = os.path.join(alt_save_dir, kpoints_save_dir)
-        os.makedirs(output_path, exist_ok=True)
-    else:
-        output_path = os.path.join(use_data_dir, kpoints_save_dir)
-        
+    output_path = alt_save_dir if alt_save_dir else os.path.join(use_data_dir, kpoints_save_dir)
+
+#    if alt_save_dir:
+#        if alt_save_name is not None:
+#            output_path = os.path.join(alt_save_dir, alt_save_name)
+#        else:
+#            output_path = os.path.join(alt_save_dir, kpoints_save_dir)
+#    #    os.makedirs(output_path, exist_ok=True)
+#    else:
+#        if alt_save_name is not None: 
+#            output_path = os.path.join(use_data_dir, alt_save_name)
+#        else:    
+#            output_path = os.path.join(use_data_dir, kpoints_save_dir)
+     
+    os.makedirs(output_path, exist_ok=True)
     if (intrinsics_matrix is None) or (distortion_coefficients is None):
         raise RuntimeError(
             "Need intrinsics and distortion_coefficients dictionaries to continue"
@@ -279,17 +285,34 @@ def registration_pipeline(
             use_points.append(kpoints_dat_conv[_cam][:, incl_kpoints_idx, :].reshape(-1, 4))
             use_points_cam.append(_cam)
 
-    excl = np.isnan(use_points[0]).any(axis=1)
-    for _points in use_points[1:]:
-        excl |= np.isnan(_points).any(axis=1)
+    use_points = np.array(use_points)
+    has_nans = np.isnan(use_points).any(axis=(0, 2))
+    
+    conf_threshold = 0.65
+    high_confidence = (use_points[:3, :, 3] > conf_threshold).all(axis=0)
+    
+    excl = has_nans | (~high_confidence)
 
-    result_rigid = pcl.registration.bundle_adjust_rigid_fixed_structure(
-        use_points[0][~excl, :3],
-        use_points[1][~excl, :3],
-        use_points[2][~excl, :3],
-        weights_B=use_points[1][~excl, 3],
-        weights_C=use_points[2][~excl, 3],
-    )
+    # excl = np.isnan(use_points[0]).any(axis=1)
+    # for _points in use_points[1:]:
+    #     excl |= np.isnan(_points).any(axis=1)
+
+    if bundle_adjust:
+        result_rigid = pcl.registration.bundle_adjust_rigid_fixed_structure(
+            use_points[0][~excl, :3],
+            use_points[1][~excl, :3],
+            use_points[2][~excl, :3],
+            weights_B=use_points[1][~excl, 3],
+            weights_C=use_points[2][~excl, 3],
+        )
+    else:
+        result_rigid = pcl.registration.estimate_transform(
+            use_points[0][~excl, :3],
+            use_points[1][~excl, :3],
+            use_points[2][~excl, :3],
+            weights_B=use_points[1][~excl, 3],
+            weights_C=use_points[2][~excl, 3],
+        )
 
     nframes = len(kpoints_dat[cameras[0]])
 
@@ -311,7 +334,7 @@ def registration_pipeline(
     # weight points based on proximity to edges
     for _cam in cameras:
         xy = use_dat_edge[_cam][..., [0, 1, 3]].reshape(-1, 3)
-        edge_weighting = pcl.kpoints.edge_weight_map(xy[:, :2], xy[..., 2], edge_margin=25)
+        edge_weighting = pcl.kpoints.edge_weight_map(xy[:, :2], xy[..., 2], edge_margin=25) # TODO see if 50 is best
         xy[:, 2] = edge_weighting
         xy = xy.reshape(-1, nbody_parts, 3)
         use_dat[_cam][..., 3] = xy[..., 2]

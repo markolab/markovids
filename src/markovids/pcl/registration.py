@@ -141,6 +141,41 @@ def bundle_adjust_rigid_fixed_structure(
         "C_to_A": {"R": R_C_inv, "t": t_C_inv},
     }
 
+def estimate_transform(
+            points_A,
+            points_B,
+            points_C,
+            weights_B=None,
+            weights_C=None,
+            huber_delta=5.0,
+            jac_sparsity=None,
+            **kwargs,):
+
+    N = points_A.shape[0]
+
+    if weights_B is None:
+        weights_B = np.ones(N)
+    if weights_C is None:
+        weights_C = np.ones(N)
+
+    # Estimate initial R, t (from B → A and C → A)
+    R_B, t_B = estimate_rigid_transform(points_A, points_B)
+    R_C, t_C = estimate_rigid_transform(points_A, points_C)
+    rv_B = Rotation.from_matrix(R_B).as_rotvec()
+    rv_C = Rotation.from_matrix(R_C).as_rotvec()
+
+    # Invert to get B → A and C → A
+    R_B_inv = R_B.T
+    t_B_inv = -R_B_inv @ t_B
+    R_C_inv = R_C.T
+    t_C_inv = -R_C_inv @ t_C
+
+    return {
+        "points_3d": points_A,
+        "B_to_A": {"R": R_B_inv, "t": t_B_inv},
+        "C_to_A": {"R": R_C_inv, "t": t_C_inv},
+    }
+
 
 def invert_similarity_transform(R, t, s):
     R_inv = R.T
