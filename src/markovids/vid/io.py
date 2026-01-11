@@ -242,8 +242,11 @@ class RawFileReader:
         distortion_coeffs=None,
     ):
         # attempt to retrieve metadata
-        metadata = toml.load(os.path.join(os.path.dirname(filepath), "metadata.toml"))
-        cam, ext = os.path.splitext(os.path.basename(filepath))
+        try:
+            metadata = toml.load(os.path.join(os.path.dirname(filepath), "metadata.toml"))
+            cam, ext = os.path.splitext(os.path.basename(filepath))
+        except FileNotFoundError:
+            metadata = {}
 
         if frame_size is None:
             frame_size = (metadata[cam]["Width"], metadata[cam]["Height"])
@@ -1023,6 +1026,11 @@ def pseudocolor_frames(
     if stack.ndim == 2:
         stack = stack[None, ...]  # add frame axis
 
+    if not isinstance(cmap, int):
+        use_cmap = get_cv2_colormap(cmap)
+    else:
+        use_cmap = cmap
+
     stack = np.asarray(stack)
 
     # Pick scaling range
@@ -1037,7 +1045,7 @@ def pseudocolor_frames(
     norm = (norm * 255).astype(np.uint8)
 
     # Apply colormap frame by frame
-    colored = [cv2.applyColorMap(frame, cmap) for frame in norm]
+    colored = [cv2.applyColorMap(frame, use_cmap) for frame in norm]
     return colored[0] if len(colored) == 1 else np.stack(colored, axis=0)[..., ::-1]
 
 

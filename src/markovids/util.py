@@ -64,7 +64,14 @@ def alternating_excitation_vid_preview(
     vid_montage_ncols: int = 3,
     nbatches: int = 1,
     burn_in: int = int(3e2),
-    use_timestamp_field="device_timestamp_ref",
+    timestamp_kwargs={
+        "merge_tolerance": 0.003,
+        "multiplexed": False,
+        "burn_in": 500,
+        "return_full_sync_only": True,
+        "use_timestamp_field": "device_timestamp_ref",
+    },
+    # use_timestamp_field="device_timestamp_ref",
     vids: list = ["fluorescence", "reflectance", "merge"],
     reflect_cmap: str = "bone",
     fluo_cmap: str = "turbo",
@@ -105,16 +112,10 @@ def alternating_excitation_vid_preview(
     montage_height = (height // downsample) * vid_montage_nrows
     _, _, ts_fluo, ts_reflect = read_timestamps_multicam(
         ts_paths,
-        use_timestamp_field=use_timestamp_field,
-        merge_tolerance=0.001,
-        return_equal_frames=True,
-        return_full_sync_only=True,
-        multiplexed=True,
-        fill=False,
-        burn_in=300,
+        **timestamp_kwargs,
     )
 
-    fps = 1 / ts_fluo[use_timestamp_field].diff().median()
+    fps = 1 / ts_fluo[timestamp_kwargs["use_timestamp_field"]].diff().median()
     total_frames = len(ts_fluo)  # everything is aligned to fluorescence
 
     # set up videos...
@@ -291,7 +292,14 @@ def alternating_excitation_vid_split(
     batch_size: int = int(1e2),
     nbatches: Optional[int] = None,
     save_path: str = "_proc",
-    use_timestamp_field: str = "device_timestamp_ref",
+    timestamp_kwargs={
+        "merge_tolerance": 0.003,
+        "multiplexed": False,
+        "burn_in": 500,
+        "return_full_sync_only": True,
+        "use_timestamp_field": "device_timestamp_ref",
+    },
+    # use_timestamp_field: str = "device_timestamp_ref",
 ) -> None:
     from markovids.vid.io import (
         read_timestamps_multicam,
@@ -306,13 +314,7 @@ def alternating_excitation_vid_split(
 
     _, _, ts_fluo, ts_reflect = read_timestamps_multicam(
         ts_paths,
-        use_timestamp_field=use_timestamp_field,
-        merge_tolerance=0.001,
-        return_equal_frames=True,
-        return_full_sync_only=True,
-        multiplexed=True,
-        fill=False,
-        burn_in=300,
+        **timestamp_kwargs,
     )
 
     new_timestamp_order = [
@@ -321,7 +323,7 @@ def alternating_excitation_vid_split(
         "device_timestamp",
         "system_timestamp",
     ]
-    column_order = [use_timestamp_field]
+    column_order = [timestamp_kwargs["use_timestamp_field"]]
     for _timestamp_type in new_timestamp_order:
         for _cam in cameras:
             column_order += [(_cam, _timestamp_type)]
@@ -329,7 +331,7 @@ def alternating_excitation_vid_split(
     ts_fluo = ts_fluo[column_order]
     ts_reflect = ts_reflect[column_order]
 
-    fps = 1 / ts_fluo[use_timestamp_field].diff().median()
+    fps = 1 / ts_fluo[timestamp_kwargs["use_timestamp_field"]].diff().median()
     total_frames = len(ts_fluo)
 
     # use the first filename?

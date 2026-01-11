@@ -207,6 +207,12 @@ if __name__ == "__main__":
 @click.option("--batch-size",type=int, default=int(1e2), show_envvar=True)
 @click.option("--overlap",type=int, default=int(5), show_envvar=True)
 @click.option("--downsample", type=int, default=int(1), show_envvar=True)
+# timestamp_kwargs options
+@click.option("--ts-merge-tolerance", type=float, default=0.003, show_envvar=True, help="Timestamp merge tolerance in seconds")
+@click.option("--ts-multiplexed/--ts-not-multiplexed", default=True, show_envvar=True, help="Multiplexed timestamps")
+@click.option("--ts-burn-in", type=int, default=500, show_envvar=True, help="Number of burn-in frames to skip")
+@click.option("--ts-return-full-sync-only/--ts-allow-partial-sync", default=True, show_envvar=True, help="Only return fully synchronized frames")
+@click.option("--ts-timestamp-field", type=str, default="device_timestamp_ref", show_envvar=True, help="Timestamp field to use for synchronization")
 # fmt: on
 def cli_generate_qd_preview(
     input_dir,
@@ -214,6 +220,11 @@ def cli_generate_qd_preview(
     batch_size,
     overlap,
     downsample,
+    ts_merge_tolerance,
+    ts_multiplexed,
+    ts_burn_in,
+    ts_return_full_sync_only,
+    ts_timestamp_field,
 ):
     cli_params = locals()
     metadata = toml.load(os.path.join(input_dir, "metadata.toml"))
@@ -250,6 +261,14 @@ def cli_generate_qd_preview(
         if os.path.exists(_vid):
             raise RuntimeError(f"{_vid} already exists, bailing!")
 
+    timestamp_kwargs = {
+        "merge_tolerance": ts_merge_tolerance,
+        "multiplexed": ts_multiplexed,
+        "burn_in": ts_burn_in,
+        "return_full_sync_only": ts_return_full_sync_only,
+        "use_timestamp_field": ts_timestamp_field,
+    }
+
     alternating_excitation_vid_preview(
         dat_paths,
         ts_paths,
@@ -259,6 +278,7 @@ def cli_generate_qd_preview(
         overlap=overlap,
         vid_paths=vid_paths,
         downsample=downsample,
+        timestamp_kwargs=timestamp_kwargs,
     )
 
 
@@ -267,11 +287,22 @@ def cli_generate_qd_preview(
 @click.argument("input_dir", type=click.Path(exists=True))
 @click.option("--nbatches", type=int, default=0, show_envvar=True)
 @click.option("--batch-size",type=int, default=int(5e2), show_envvar=True)
+# timestamp_kwargs options
+@click.option("--ts-merge-tolerance", type=float, default=0.003, show_envvar=True, help="Timestamp merge tolerance in seconds")
+@click.option("--ts-multiplexed/--ts-not-multiplexed", default=True, show_envvar=True, help="Multiplexed timestamps")
+@click.option("--ts-burn-in", type=int, default=500, show_envvar=True, help="Number of burn-in frames to skip")
+@click.option("--ts-return-full-sync-only/--ts-allow-partial-sync", default=True, show_envvar=True, help="Only return fully synchronized frames")
+@click.option("--ts-timestamp-field", type=str, default="device_timestamp_ref", show_envvar=True, help="Timestamp field to use for synchronization")
 # fmt: on
 def cli_split_qd_vids(
     input_dir,
     nbatches,
     batch_size,
+    ts_merge_tolerance,
+    ts_multiplexed,
+    ts_burn_in,
+    ts_return_full_sync_only,
+    ts_timestamp_field,
 ):
     cli_params = locals()
     metadata = toml.load(os.path.join(input_dir, "metadata.toml"))
@@ -287,12 +318,22 @@ def cli_split_qd_vids(
     dat_paths = {os.path.join(input_dir, f"{_cam}.avi"): _cam for _cam in cameras}
     ts_paths = {os.path.join(input_dir, f"{_cam}.txt"): _cam for _cam in cameras}
 
+     # Build timestamp_kwargs from CLI options
+    timestamp_kwargs = {
+        "merge_tolerance": ts_merge_tolerance,
+        "multiplexed": ts_multiplexed,
+        "burn_in": ts_burn_in,
+        "return_full_sync_only": ts_return_full_sync_only,
+        "use_timestamp_field": ts_timestamp_field,
+    }
+
     alternating_excitation_vid_split(
         dat_paths,
         ts_paths,
         load_dct,
         nbatches=nbatches,
         batch_size=batch_size,
+        timestamp_kwargs=timestamp_kwargs,
     )
 
 
@@ -386,7 +427,7 @@ def cli_sync_depth_video(
     # Build bground_kwargs from CLI options
     bground_kwargs = {
         "step_size": bground_step_size,
-        "agg_func": np.median,  # Fixed to median for now
+        "agg_func": np.nanmedian,  # Fixed to median for now, changed to nanmedian 12-17-25 JEM
         "reader_kwargs": {"threads": bground_threads},
         "save_dir": bground_save_dir,
         "force": bground_force,
