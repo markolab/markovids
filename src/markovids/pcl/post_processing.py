@@ -50,6 +50,7 @@ class ProcessingFlags:
     constrain_bones: bool = True
     impute_pca: bool = True
     regularize_temporal: bool = True
+    final_smoothing: bool = True
 
 
 class KeypointPostProcessor:
@@ -111,9 +112,10 @@ class KeypointPostProcessor:
             )
         
         # Final smoothing
-        keypoints = self._apply_final_smoothing(
-            keypoints, included_keypoints, config.post_align_sgolay
-        )
+        if flags.final_smoothing:
+            keypoints = self._apply_final_smoothing(
+                keypoints, included_keypoints, config.post_align_sgolay
+            )
         
         return keypoints, confidence
     
@@ -275,7 +277,8 @@ def post_processing(
     skeleton: Any,
     constrain_bones: bool = True,
     impute_pca: bool = True,
-    regularize_temporal: bool = True
+    regularize_temporal: bool = True,
+    final_smoothing: bool = True
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Legacy wrapper for the refactored post-processing functionality.
@@ -304,7 +307,8 @@ def post_processing(
     flags = ProcessingFlags(
         constrain_bones=constrain_bones,
         impute_pca=impute_pca,
-        regularize_temporal=regularize_temporal
+        regularize_temporal=regularize_temporal,
+        final_smoothing=final_smoothing
     )
     
     return processor.process(

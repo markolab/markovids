@@ -15,16 +15,24 @@ from pathlib import Path
 
 def load_config(config_path):
     """
-    Loads configuration from a TOML file.
+    Loads configuration from a TOML file and performs post-processing.
+
+    Args:
+        config_path (str): The file path to the TOML configuration file.
+
+    Returns:
+        dict: The processed configuration dictionary, with 'index_conf_map' 
+            keys converted to integers.
+    Raises:
+        IOError: If the config_path is None or the file does not exist.
     """
+    
     if config_path is None or not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found at: {config_path}")
     
     with open(config_path, "r") as f:
         config = toml.load(f)
     
-    # Post-processing: TOML keys are always strings, but your code might expect integers.
-    # Convert 'index_conf_map' keys back to integers.
     if "index_conf_map" in config:
         config["index_conf_map"] = {int(k): v for k, v in config["index_conf_map"].items()}
         
@@ -43,6 +51,7 @@ def nan_safe_linalg_norm(arr1, arr2, axis=1):
         np.ndarray: L2 norms with NaNs excluded. If all values are NaN for a
                     particular row, the result for that row will be NaN.
     """
+    
     # Ensure arr2 is broadcastable to arr1
     if arr1.shape[-1] != arr2.shape[-1]:
         raise ValueError("Trailing dimensions of arr1 and arr2 must match for broadcasting.")
@@ -65,6 +74,22 @@ def nan_safe_linalg_norm(arr1, arr2, axis=1):
     return norm_result
 
 def get_bground_vals(keyps, _cam, bground_by_cam, width=640, height=480):
+    """
+    Extracts background intensity values at specific keypoint coordinates.
+
+    Args:
+        keyps (np.ndarray): Array of keypoints with shape (..., 2 or more), 
+            where the first two dimensions of the last axis are x and y.
+        _cam (str): The camera identifier key used to index bground_by_cam.
+        bground_by_cam (dict): Dictionary mapping camera keys to 2D image arrays.
+        width (int): Maximum width for clipping coordinates. Defaults to 640.
+        height (int): Maximum height for clipping coordinates. Defaults to 480.
+
+    Returns:
+        np.ndarray: An array of the same leading shape as keyps containing 
+            background values, with NaNs where keypoints were invalid.
+    """
+    
     bground = bground_by_cam[_cam]
     
     # Get x,y coordinates
@@ -104,15 +129,39 @@ def registration_pipeline(
     render=False,
     bundle_adjust=False
 ):
+    """
+    Executes the full 3D keypoint registration pipeline, including coordinate 
+    projection, multi-camera merging, and post-processing.
+
+    Args:
+        config_path (str): Path to the TOML configuration file.
+        use_data_dir (str): Base directory containing the session data.
+        kpoints_save_dir (str): Subdirectory name for saving/loading keypoints.
+        intrinsics_matrix (dict): Dictionary of 3x3 camera intrinsic matrices.
+        distortion_coefficients (dict): Dictionary of camera distortion vectors.
+        bground_erode_px (int): Pixel radius for eroding background masks.
+        min_confidence (float): Confidence threshold for merging keypoints.
+        z_scale (float): Scaling factor applied to the Z-dimension.
+        mp4_max_render_frames (int, optional): Max frames to include in video.
+        mp4_renderer (str): Visualization backend ('vedo' or 'matplotlib').
+        mp4_burn_in (int): Number of initial frames to skip in the render.
+        save_file (str): Name of the output H5 file.
+        alt_save_dir (str, optional): Alternative path to save outputs.
+        meta_path (str, optional): Path to metadata file if not in use_data_dir.
+        render (bool): If True, generates an MP4 visualization.
+        bundle_adjust (bool): If True, uses bundle adjustment for registration.
+
+    Returns:
+        None: Results are saved directly to H5 and TOML files in the output path.
+
+    Raises:
+        RuntimeError: If intrinsic or distortion matrices are missing.
+        IOError: If critical configuration or metadata files are not found.
+    """
     
-    # 1. Load Global Variables from Config
     cfg = load_config(config_path)
     
-    # Extract variables to local scope
     reference_camera = cfg["reference_camera"]
-
-    # smoothing_params = cfg["smoothing_params"]
-    # hampel_params = cfg["hampel_params"]
 
     noisy_keypoints = cfg["noisy_keypoints"]
     incl_kpoints_fit_transform = cfg["incl_kpoints_fit_transform"]
@@ -131,25 +180,12 @@ def registration_pipeline(
     # Extract the list of keypoints (and remove from dict to keep it clean)
     incl_kpoints_post_processing = postprocessing_params.pop("incl_kpoints_post_processing")
 
-    # Inject FPS dynamically
     if "temporal_regularization" in postprocessing_params:
         postprocessing_params["temporal_regularization"]["fps"] = fps
         
     print(f"Loaded post-processing params from {config_path}")
 
     output_path = alt_save_dir if alt_save_dir else os.path.join(use_data_dir, kpoints_save_dir)
-
-#    if alt_save_dir:
-#        if alt_save_name is not None:
-#            output_path = os.path.join(alt_save_dir, alt_save_name)
-#        else:
-#            output_path = os.path.join(alt_save_dir, kpoints_save_dir)
-#    #    os.makedirs(output_path, exist_ok=True)
-#    else:
-#        if alt_save_name is not None: 
-#            output_path = os.path.join(use_data_dir, alt_save_name)
-#        else:    
-#            output_path = os.path.join(use_data_dir, kpoints_save_dir)
      
     os.makedirs(output_path, exist_ok=True)
     if (intrinsics_matrix is None) or (distortion_coefficients is None):
@@ -216,7 +252,6 @@ def registration_pipeline(
             os.path.join(use_data_dir, "_proc", kpoints_save_dir, f"{_cam}.pkl.gz")
         )
 
-    # We need another pass to match min_frames
     min_frames = min(data.shape[0] for data in kpoints_dat.values())
     for _cam in cameras:
         bground = bground_by_cam[_cam]
@@ -242,7 +277,7 @@ def registration_pipeline(
 
     n_frames, nbody_parts, dims = kpoints_dat[reference_camera].shape
 
-    ### Convert to World coordinates
+    # Convert to World coordinates
     kpoints_dat_conv = defaultdict(lambda: np.zeros((n_frames, nbody_parts, dims)))
 
     for _cam in cameras:
@@ -263,8 +298,6 @@ def registration_pipeline(
         
         kpoints_dat_conv[_cam][..., :3] = _converted
         kpoints_dat_conv[_cam][..., 3] = kpoints_dat[_cam][..., 3]
-        
-        # kpoints_dat_conv[_cam][..., 2] = -1 * kpoints_dat_conv[_cam][..., 2] + get_bground_vals(kpoints_dat[_cam], _cam, bground_by_cam)
 
     # Only include subset of nodes for transform
     incl_kpoints_idx = [
@@ -334,7 +367,7 @@ def registration_pipeline(
     # weight points based on proximity to edges
     for _cam in cameras:
         xy = use_dat_edge[_cam][..., [0, 1, 3]].reshape(-1, 3)
-        edge_weighting = pcl.kpoints.edge_weight_map(xy[:, :2], xy[..., 2], edge_margin=25) # TODO see if 50 is best
+        edge_weighting = pcl.kpoints.edge_weight_map(xy[:, :2], xy[..., 2], edge_margin=25)
         xy[:, 2] = edge_weighting
         xy = xy.reshape(-1, nbody_parts, 3)
         use_dat[_cam][..., 3] = xy[..., 2]
@@ -462,10 +495,6 @@ def registration_pipeline(
     all_keypoints = kpoints_metadata["node_names"]
     not_noisy_keypoints = list(set(all_keypoints).difference(noisy_keypoints))
 
-    '''
-        Begin additional post-processing
-    '''
-
     merged_data_proc = merged_data.copy() 
     merged_conf_proc = merged_conf.copy()
 
@@ -492,11 +521,6 @@ def registration_pipeline(
     else:
         print("No post processing will be done...")
         final_conf = np.zeros_like(merged_conf)
-
-
-    '''
-        End additional post-processing
-    '''
 
     plt_kpoints_idx = [
         kpoints_metadata["node_names"].index(_incl) for _incl in plt_kpoints

@@ -89,7 +89,6 @@ def residuals_rigid(x, points_A, points_B, points_C, weights_B, weights_C):
 
     return np.hstack([err_B.ravel(), err_C.ravel()])
 
-
 def bundle_adjust_rigid_fixed_structure(
     points_A,
     points_B,

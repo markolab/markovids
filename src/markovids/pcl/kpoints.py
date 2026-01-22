@@ -1091,7 +1091,13 @@ class PCAImputer:
         if self.transform_z:
             imputed = self._inverse_transform_z_coords(imputed)
         
-        return imputed.reshape(n_frames, n_keypoints, 3)
+        # Reshape to (n_frames, n_keypoints, 3) before returning
+        imputed = imputed.reshape(n_frames, n_keypoints, 3)
+        
+        # Ensure Z-values are non-negative (clip below zero to zero)
+        imputed[:, :, 2] = np.maximum(0, imputed[:, :, 2])
+        
+        return imputed # .reshape(n_frames, n_keypoints, 3)
     
     def transform(self, aligned_keypoints):
         """Transform aligned keypoints to PCA space."""
