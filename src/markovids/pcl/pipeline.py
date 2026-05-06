@@ -1,3 +1,5 @@
+import ast
+
 import cv2
 import tifffile
 import toml
@@ -127,7 +129,8 @@ def registration_pipeline(
     alt_save_dir=None,
     meta_path = None,
     render=False,
-    bundle_adjust=False
+    bundle_adjust=False,
+    transforms_path=None
 ):
     """
     Executes the full 3D keypoint registration pipeline, including coordinate 
@@ -171,9 +174,7 @@ def registration_pipeline(
     index_conf_map = cfg["index_conf_map"]
     renderer_kwargs = cfg["renderer_kwargs"]
 
-    constrain_bones = cfg["constrain_bones"]
-    impute_pca = cfg["impute_pca"]
-    regularize_temporal = cfg["regularize_temporal"]
+    proc_order = cfg["proc_order"]
 
     postprocessing_params = cfg["post_processing"]
 
@@ -330,36 +331,50 @@ def registration_pipeline(
     # for _points in use_points[1:]:
     #     excl |= np.isnan(_points).any(axis=1)
 
-    if bundle_adjust:
-        result_rigid = pcl.registration.bundle_adjust_rigid_fixed_structure(
-            use_points[0][~excl, :3],
-            use_points[1][~excl, :3],
-            use_points[2][~excl, :3],
-            weights_B=use_points[1][~excl, 3],
-            weights_C=use_points[2][~excl, 3],
-        )
-    else:
-        result_rigid = pcl.registration.estimate_transform(
-            use_points[0][~excl, :3],
-            use_points[1][~excl, :3],
-            use_points[2][~excl, :3],
-            weights_B=use_points[1][~excl, 3],
-            weights_C=use_points[2][~excl, 3],
-        )
-
     nframes = len(kpoints_dat[cameras[0]])
-
     ref_index = cameras.index(reference_camera)
-    new_transforms = {}
-    new_transforms[(use_points_cam[1], reference_camera)] = (
-        result_rigid["B_to_A"]["R"],
-        result_rigid["B_to_A"]["t"],
-    )
-    new_transforms[(reference_camera, reference_camera)] = np.eye(3), np.zeros((3,))
-    new_transforms[(use_points_cam[2], reference_camera)] = (
-        result_rigid["C_to_A"]["R"],
-        result_rigid["C_to_A"]["t"],
-    )
+
+    if transforms_path is None:
+
+        print("No transforms file provided. Estimating transforms using rigid registration...")
+
+        if bundle_adjust:
+            result_rigid = pcl.registration.bundle_adjust_rigid_fixed_structure(
+                use_points[0][~excl, :3],
+                use_points[1][~excl, :3],
+                use_points[2][~excl, :3],
+                weights_B=use_points[1][~excl, 3],
+                weights_C=use_points[2][~excl, 3],
+            )
+        else:
+            result_rigid = pcl.registration.estimate_transform(
+                use_points[0][~excl, :3],
+                use_points[1][~excl, :3],
+                use_points[2][~excl, :3],
+                weights_B=use_points[1][~excl, 3],
+                weights_C=use_points[2][~excl, 3],
+            )
+
+        
+        new_transforms = {}
+        new_transforms[(use_points_cam[1], reference_camera)] = (
+            result_rigid["B_to_A"]["R"],
+            result_rigid["B_to_A"]["t"],
+        )
+        new_transforms[(reference_camera, reference_camera)] = np.eye(3), np.zeros((3,))
+        new_transforms[(use_points_cam[2], reference_camera)] = (
+            result_rigid["C_to_A"]["R"],
+            result_rigid["C_to_A"]["t"],
+        )
+
+    else:
+        new_transforms = toml.load(transforms_path)
+        # Cast the loaded lists back into NumPy arrays
+        new_transforms = {
+            ast.literal_eval(k): (np.array(v[0]), np.array(v[1])) 
+            for k, v in new_transforms.items()
+        }
+        print(f"Using transforms from file: {transforms_path}")
 
     use_dat = copy.deepcopy(kpoints_dat_conv)
     use_dat_edge = copy.deepcopy(kpoints_dat)
@@ -498,7 +513,7 @@ def registration_pipeline(
     merged_data_proc = merged_data.copy() 
     merged_conf_proc = merged_conf.copy()
 
-    if any([constrain_bones, impute_pca, regularize_temporal]):
+    if len(proc_order) >= 1:
         final_smoothed, final_conf = post_processing(
             merged_data,
             merged_conf,
@@ -506,11 +521,8 @@ def registration_pipeline(
             postprocessing_params,
             incl_kpoints_post_processing,
             skeleton,
-            constrain_bones=constrain_bones,
-            impute_pca=False,
-            regularize_temporal=regularize_temporal
+            proc_order=proc_order,
         )
-
 
         incl_kpoints_post_proc_idx = [
             kpoints_metadata["node_names"].index(_incl)
@@ -520,7 +532,7 @@ def registration_pipeline(
         merged_data_proc[:, incl_kpoints_post_proc_idx] = final_smoothed
     else:
         print("No post processing will be done...")
-        final_conf = np.zeros_like(merged_conf)
+        final_conf = merged_conf.copy()
 
     plt_kpoints_idx = [
         kpoints_metadata["node_names"].index(_incl) for _incl in plt_kpoints

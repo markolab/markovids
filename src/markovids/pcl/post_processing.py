@@ -42,19 +42,20 @@ class PostProcessingConfig:
     post_align_hampel: Dict[str, Any]
     post_align_imputed_smoothing: Dict[str, Any]
     post_align_sgolay: Dict[str, Any]
-
-
-@dataclass
-class ProcessingFlags:
-    """Boolean flags for enabling/disabling processing steps."""
-    constrain_bones: bool = True
-    impute_pca: bool = True
-    regularize_temporal: bool = True
-    final_smoothing: bool = True
+    interpolation: Dict[str, Any] = None
+    autoencoder: Dict[str, Any] = None
 
 
 class KeypointPostProcessor:
     """Handles post-processing of keypoint data with various smoothing and constraint operations."""
+
+    DEFAULT_PROC_ORDER = [
+        "temporal",
+        "bone",
+        "interpolate",
+        "final_smooth",
+    ]
+    VALID_PROC_STAGES = set(DEFAULT_PROC_ORDER + ["pca_impute", "autoencoder_impute", "fill"])
     
     def __init__(self, kpoints_metadata: Dict[str, Any], skeleton: Any):
         self.kpoints_metadata = kpoints_metadata
@@ -66,7 +67,7 @@ class KeypointPostProcessor:
         merged_conf: np.ndarray,
         included_keypoints: List[str],
         config: PostProcessingConfig,
-        flags: ProcessingFlags = ProcessingFlags()
+        proc_order: Optional[List[str]] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Main post-processing pipeline for keypoint data.
@@ -76,7 +77,10 @@ class KeypointPostProcessor:
             merged_conf: Confidence scores for keypoints
             included_keypoints: List of keypoint names to include in processing
             config: Post-processing configuration parameters
-            flags: Boolean flags to enable/disable processing steps
+            proc_order: Optional ordered stage list controlling pipeline flow.
+                Valid stages are: "temporal", "bone", "interpolate",
+                "pca_impute", "autoencoder_impute", "final_bone",
+                "final_smooth".
             
         Returns:
             Tuple of (processed_keypoints, processed_confidence)
@@ -85,37 +89,51 @@ class KeypointPostProcessor:
         keypoints, confidence = self._extract_keypoints(
             merged_data, merged_conf, included_keypoints
         )
-        
-        # Apply temporal regularization
-        if flags.regularize_temporal:
-            keypoints, confidence = self._apply_temporal_smoothing(
-                keypoints, confidence, config.temporal_regularization
+
+        order = self.DEFAULT_PROC_ORDER if proc_order is None else proc_order
+        unknown_stages = [stage for stage in order if stage not in self.VALID_PROC_STAGES]
+        if unknown_stages:
+            raise ValueError(
+                f"Unknown stage(s) in proc_order: {unknown_stages}. "
+                f"Valid stages: {sorted(self.VALID_PROC_STAGES)}"
             )
-        
-        # Apply bone constraints
+
         bone_constraints = None
-        if flags.constrain_bones:
-            keypoints, confidence, bone_constraints = self._apply_bone_constraints(
-                keypoints, confidence, included_keypoints, config
-            )
-        
-        # Apply PCA imputation
-        if flags.impute_pca:
-            keypoints, confidence = self._apply_pca_imputation(
-                keypoints, confidence, included_keypoints, config
-            )
-        
-        # Final bone constraints (if enabled)
-        if flags.constrain_bones:
-            keypoints, confidence = self._apply_final_bone_constraints(
-                keypoints, confidence, config, bone_constraints
-            )
-        
-        # Final smoothing
-        if flags.final_smoothing:
-            keypoints = self._apply_final_smoothing(
-                keypoints, included_keypoints, config.post_align_sgolay
-            )
+
+        for stage in order:
+            if stage == "temporal":
+                keypoints, confidence = self._apply_temporal_smoothing(
+                    keypoints, confidence, config.temporal_regularization
+                )
+
+            elif stage == "bone":
+                if bone_constraints is None:
+                    bone_constraints = kpoints.create_bone_constraints_from_data(
+                        keypoints, included_keypoints, self.skeleton, confidence
+                    )
+                keypoints, confidence, bone_constraints = self._apply_bone_constraints(
+                    keypoints, confidence, included_keypoints, config, bone_constraints
+                )
+
+            elif stage in ("interpolate", "fill"):
+                keypoints, confidence = self._apply_interpolation(
+                    keypoints, confidence, included_keypoints, config
+                )
+
+            elif stage == "pca_impute":
+                keypoints, confidence = self._apply_pca_imputation(
+                    keypoints, confidence, included_keypoints, config,
+                )
+
+            elif stage == "autoencoder_impute":
+                keypoints, confidence = self._apply_autoencoder_imputation(
+                    keypoints, confidence, included_keypoints, config,
+                )
+
+            elif stage == "final_smooth":
+                keypoints = self._apply_final_smoothing(
+                    keypoints, included_keypoints, config.post_align_sgolay
+                )
         
         return keypoints, confidence
     
@@ -152,12 +170,14 @@ class KeypointPostProcessor:
         keypoints: np.ndarray,
         confidence: np.ndarray,
         included_keypoints: List[str],
-        config: PostProcessingConfig
+        config: PostProcessingConfig,
+        bone_constraints: Optional[BoneConstraints] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Apply bone length constraints to maintain anatomical consistency."""
-        bone_constraints = kpoints.create_bone_constraints_from_data(
-            keypoints, included_keypoints, self.skeleton, confidence
-        )
+        if bone_constraints is None:
+            bone_constraints = kpoints.create_bone_constraints_from_data(
+                keypoints, included_keypoints, self.skeleton, confidence
+            )
         
         optimizer = kpoints.BoneConstraintOptimizer(
             bone_constraints, **config.bone_length_regularization
@@ -179,7 +199,7 @@ class KeypointPostProcessor:
         keypoints: np.ndarray,
         confidence: np.ndarray,
         included_keypoints: List[str],
-        config: PostProcessingConfig
+        config: PostProcessingConfig,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Apply PCA-based imputation to fill missing keypoints."""
         aligner = kpoints.PoseAligner(
@@ -220,6 +240,104 @@ class KeypointPostProcessor:
         
         return smoothed_keypoints, combined_confidence
     
+    def _apply_autoencoder_imputation(
+        self,
+        keypoints: np.ndarray,
+        confidence: np.ndarray,
+        included_keypoints: List[str],
+        config: PostProcessingConfig,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Apply autoencoder-based imputation to fill missing keypoints.
+
+        Uses the same alignment workflow as PCA imputation but substitutes
+        ``AutoencoderImputer`` for ``PCAImputer``.
+        """
+        ae_cfg = config.autoencoder or {}
+        checkpoint_path = ae_cfg.get("checkpoint_path")
+        if checkpoint_path is None:
+            raise ValueError(
+                "config.autoencoder.checkpoint_path must be set to use "
+                "autoencoder imputation"
+            )
+
+        aligner = kpoints.PoseAligner(
+            keypoint_names=included_keypoints, **config.align
+        )
+
+        # Align keypoints
+        centroids, angles = aligner.compute_alignment(
+            keypoints, **config.align_compute
+        )
+        aligned_keypoints = aligner.transform(keypoints, centroids, angles)
+
+        ae_imputer = kpoints.AutoencoderImputer(
+            checkpoint_path=checkpoint_path,
+            device=ae_cfg.get("device", "cpu"),
+            batch_size=ae_cfg.get("batch_size", 4096),
+        )
+
+        # Impute missing values
+        imputed_aligned_keypoints = ae_imputer.impute(
+            aligned_keypoints, aligner, confidence
+        )
+        imputed_keypoints = aligner.inverse_transform(
+            imputed_aligned_keypoints, centroids, angles
+        )
+
+        # Calculate imputation confidence
+        was_imputed = np.isnan(keypoints).any(axis=-1)
+        imputation_confidence = kpoints.compute_imputation_confidence(was_imputed)
+
+        # Apply Hampel filter to remove outliers
+        filtered_keypoints, outlier_mask = kpoints.hampel_filter(
+            imputed_keypoints, was_imputed, **config.post_align_hampel
+        )
+
+        # Final smoothing of imputed regions
+        smoothed_keypoints = kpoints.simple_smooth_imputed(
+            filtered_keypoints, was_imputed, **config.post_align_imputed_smoothing
+        )
+
+        # Combine confidence scores
+        combined_confidence = self._combine_confidence_scores(
+            confidence, imputation_confidence
+        )
+
+        return smoothed_keypoints, combined_confidence
+
+    def _apply_interpolation(
+        self,
+        keypoints: np.ndarray,
+        confidence: np.ndarray,
+        included_keypoints: List[str],
+        config: PostProcessingConfig,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Align and interpolate keypoints without any imputation step."""
+        aligner = kpoints.PoseAligner(
+            keypoint_names=included_keypoints, **config.align
+        )
+
+        # Align keypoints before interpolation, matching PCA workflow.
+        centroids, angles = aligner.compute_alignment(
+            keypoints, **config.align_compute
+        )
+        aligned_keypoints = aligner.transform(keypoints, centroids, angles)
+
+        interp_kwargs = config.interpolation if config.interpolation else {}
+        interpolator = kpoints.Interpolator(**interp_kwargs)
+        interpolated_aligned_keypoints, _, interp_confidence = (
+            interpolator.interpolate(aligned_keypoints, confidence)
+        )
+
+        interpolated_keypoints = aligner.inverse_transform(
+            interpolated_aligned_keypoints, centroids, angles
+        )
+
+        if interp_confidence is not None:
+            confidence = interp_confidence
+
+        return interpolated_keypoints, confidence
+
     def _apply_final_bone_constraints(
         self,
         keypoints: np.ndarray,
@@ -237,6 +355,8 @@ class KeypointPostProcessor:
         optimizer = kpoints.BoneConstraintOptimizer(
             bone_constraints, **config.bone_length_regularization
         )
+
+
         
         return optimizer.process_sequence(keypoints, confidence)
     
@@ -275,10 +395,7 @@ def post_processing(
     postprocessing_params: Dict[str, Any],
     incl_kpoints_post_processing: List[str],
     skeleton: Any,
-    constrain_bones: bool = True,
-    impute_pca: bool = True,
-    regularize_temporal: bool = True,
-    final_smoothing: bool = True
+    proc_order: Optional[List[str]] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Legacy wrapper for the refactored post-processing functionality.
@@ -292,9 +409,7 @@ def post_processing(
         postprocessing_params: Dictionary of processing parameters
         incl_kpoints_post_processing: List of keypoint names to include
         skeleton: Skeleton structure for bone constraints
-        constrain_bones: Enable/disable bone constraint processing
-        impute_pca: Enable/disable PCA imputation processing
-        regularize_temporal: Enable/disable temporal regularization
+        proc_order: Ordered list of processing stages to apply.
         
     Returns:
         Tuple of (processed_keypoints, processed_confidence)
@@ -304,17 +419,11 @@ def post_processing(
     processor = KeypointPostProcessor(kpoints_metadata, skeleton)
     
     config = PostProcessingConfig(**postprocessing_params)
-    flags = ProcessingFlags(
-        constrain_bones=constrain_bones,
-        impute_pca=impute_pca,
-        regularize_temporal=regularize_temporal,
-        final_smoothing=final_smoothing
-    )
     
     return processor.process(
         merged_data,
         merged_conf,
         incl_kpoints_post_processing,
         config,
-        flags
+        proc_order=proc_order,
     )
