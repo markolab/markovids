@@ -72,37 +72,59 @@ def next_even_number(x):
 def prev_even_number(x):
     return (np.floor(x / 2) * 2).astype("int")
 
-import matplotlib.cm as cm
+
 def alternating_excitation_vid_preview(
     dat_paths: dict,
     ts_paths: dict,
     load_dct: dict,
-    batch_size: int=int(1e2),
-    overlap: int=int(10),
-    bground_spacing: int=int(1e3),
-    downsample: int=2,
-    spatial_bp: tuple=(0., 0.),
-    temporal_tau: float=0.,
-    fluo_threshold_sig: float=5.0,
-    vid_montage_ncols: int=3,
-    nbatches: int=1,
-    burn_in: int=int(3e2),
-    use_timestamp_field="device_timestamp_ref",
-    vids: list=["fluorescence", "reflectance", "merge"],
-    reflect_cmap=cm.get_cmap("gray"),
-    fluo_cmap=cm.get_cmap("turbo"),
-    fluo_only_cmap=cm.get_cmap("magma"),
-    reflect_norm=plt.matplotlib.colors.Normalize(vmin=0, vmax=255),
-    fluo_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=40),  # in z units
-    fluo_only_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=30),  # in z units
-    vid_paths: dict={
+    batch_size: int = int(1e2),
+    overlap: int = int(10),
+    bground_spacing: int = int(1e3),
+    downsample: int = 2,
+    spatial_bp: tuple = (0.0, 0.0),
+    temporal_tau: float = 0.0,
+    fluo_threshold_sig: float = 5.0,
+    vid_montage_ncols: int = 3,
+    nbatches: int = 1,
+    burn_in: int = int(3e2),
+    timestamp_kwargs={
+        "merge_tolerance": 0.003,
+        "multiplexed": False,
+        "burn_in": 500,
+        "return_full_sync_only": True,
+        "use_timestamp_field": "device_timestamp_ref",
+    },
+    # use_timestamp_field="device_timestamp_ref",
+    vids: list = ["fluorescence", "reflectance", "merge"],
+    reflect_cmap: str = "bone",
+    fluo_cmap: str = "turbo",
+    fluo_only_cmap: str = "magma",
+    reflect_norm: tuple = (0, 255),
+    fluo_norm: tuple = (6, 40),
+    fluo_only_norm: tuple = (6, 30),
+    # reflect_cmap=plt.matplotlib.colormaps.get_cmap("gray"),
+    # fluo_cmap=plt.matplotlib.colormaps.get_cmap("turbo"),
+    # fluo_only_cmap=plt.matplotlib.colormaps.get_cmap("magma"),
+    # reflect_norm=plt.matplotlib.colors.Normalize(vmin=0, vmax=255),
+    # fluo_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=40),  # in z units
+    # fluo_only_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=30),  # in z units
+    vid_paths: dict = {
         "reflectance": "reflectance.mp4",
         "fluorescence": "fluorescence.mp4",
         "merge": "merge.mp4",
     },
-    save_path: str="_proc",
+    save_path: str = "_proc",
 ) -> None:
     # TODO: assert that all cams have same frame size
+    from markovids.vid.io import (
+        get_bground,
+        downsample_frames,
+        read_timestamps_multicam,
+        read_frames_multicam,
+        MP4WriterPreview,
+        pseudocolor_frames,
+    )
+    from markovids.vid.util import bp_filter, sos_filter, video_montage
 
     cameras = list(dat_paths.values())
     vid_montage_nrows = int(np.ceil(len(cameras) / vid_montage_ncols))
