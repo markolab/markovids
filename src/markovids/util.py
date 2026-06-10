@@ -1,15 +1,23 @@
 from typing import Tuple, Optional
+from markovids.vid.io import (
+    get_bground,
+    downsample_frames,
+    read_timestamps_multicam,
+    read_frames_multicam,
+    AviWriter,
+    MP4WriterPreview,
+)
+from markovids.vid.util import bp_filter, sos_filter, video_montage
 from tqdm.auto import tqdm
 
 import matplotlib.pyplot as plt
 import os
 import numpy as np
 
-default_win_kwargs = {"window": 20, "min_periods": 1, "center": True}
-
-
-def hampel(df, scale=0.6745, threshold=3, replace=True, insert_nans=True, **kwargs):
-    use_kwargs = default_win_kwargs | kwargs
+default_win_kwargs =  {"window": 20, "min_periods": 1, "center": True}
+def hampel(df, scale=.6745, threshold=3, replace=True, insert_nans=True, **kwargs):
+    # use_kwargs = default_win_kwargs | kwargs # only in 3.9 >
+    use_kwargs = {**default_win_kwargs, **kwargs}
     new_df = df.copy()
     meds = df.rolling(**use_kwargs).median()
     devs = (df - meds).abs()
@@ -19,22 +27,37 @@ def hampel(df, scale=0.6745, threshold=3, replace=True, insert_nans=True, **kwar
 
     # handles edges via min_periods etc.
     if insert_nans:
-        new_df[np.logical_or(np.isnan(meds), np.isnan(mads_dev))] = np.nan
+        new_df[np.logical_or(np.isnan(meds),np.isnan(mads_dev))] = np.nan
     if replace:
-        new_df[mads_dev > threshold] = meds[mads_dev > threshold]
+        new_df[mads_dev>threshold] = meds[mads_dev>threshold]
     else:
         new_df[mads_dev > threshold] = np.nan
     return new_df
 
-
 def squash_conf(conf, gamma=2, min_cutoff=0.05):
-    return np.where(conf > min_cutoff, conf**gamma, 0)
+    return np.where(conf > min_cutoff, conf ** gamma, 0)
 
+def squash_conf_dynamic(conf, cutoff_dict, default_cutoff=0.05, gamma=2):
+    """
+    conf: (frames, keypoints, dims) -> e.g. (3, 14, 1)
+    cutoff_dict: {index: value} -> e.g. {0: 0.1, 3: 0.8}
+    default_cutoff: Value to use for indices not present in the dict
+    """
+    n_points = conf.shape[1]
+    
+    cutoff_array = np.full(n_points, default_cutoff)
+    
+    for idx, val in cutoff_dict.items():
+        if 0 <= idx < n_points:
+            cutoff_array[idx] = val
+            
+    cutoff_array = cutoff_array.reshape(1, -1, 1)
+    
+    return np.where(conf > cutoff_array, conf ** gamma, 0)
 
 def savgol_filter_missing(x, window_length=7, poly_order=2):
     from scipy.signal import savgol_filter
     import pandas as pd
-
     proc_x = x.to_numpy()
     is_valid = np.isfinite(proc_x)
     proc_x[is_valid] = savgol_filter(proc_x[is_valid], window_length, poly_order)
@@ -49,59 +72,37 @@ def next_even_number(x):
 def prev_even_number(x):
     return (np.floor(x / 2) * 2).astype("int")
 
-
+import matplotlib.cm as cm
 def alternating_excitation_vid_preview(
     dat_paths: dict,
     ts_paths: dict,
     load_dct: dict,
-    batch_size: int = int(1e2),
-    overlap: int = int(10),
-    bground_spacing: int = int(1e3),
-    downsample: int = 2,
-    spatial_bp: tuple = (0.0, 0.0),
-    temporal_tau: float = 0.0,
-    fluo_threshold_sig: float = 5.0,
-    vid_montage_ncols: int = 3,
-    nbatches: int = 1,
-    burn_in: int = int(3e2),
-    timestamp_kwargs={
-        "merge_tolerance": 0.003,
-        "multiplexed": False,
-        "burn_in": 500,
-        "return_full_sync_only": True,
-        "use_timestamp_field": "device_timestamp_ref",
-    },
-    # use_timestamp_field="device_timestamp_ref",
-    vids: list = ["fluorescence", "reflectance", "merge"],
-    reflect_cmap: str = "bone",
-    fluo_cmap: str = "turbo",
-    fluo_only_cmap: str = "magma",
-    reflect_norm: tuple = (0, 255),
-    fluo_norm: tuple = (6, 40),
-    fluo_only_norm: tuple = (6, 30),
-    # reflect_cmap=plt.matplotlib.colormaps.get_cmap("gray"),
-    # fluo_cmap=plt.matplotlib.colormaps.get_cmap("turbo"),
-    # fluo_only_cmap=plt.matplotlib.colormaps.get_cmap("magma"),
-    # reflect_norm=plt.matplotlib.colors.Normalize(vmin=0, vmax=255),
-    # fluo_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=40),  # in z units
-    # fluo_only_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=30),  # in z units
-    vid_paths: dict = {
+    batch_size: int=int(1e2),
+    overlap: int=int(10),
+    bground_spacing: int=int(1e3),
+    downsample: int=2,
+    spatial_bp: tuple=(0., 0.),
+    temporal_tau: float=0.,
+    fluo_threshold_sig: float=5.0,
+    vid_montage_ncols: int=3,
+    nbatches: int=1,
+    burn_in: int=int(3e2),
+    use_timestamp_field="device_timestamp_ref",
+    vids: list=["fluorescence", "reflectance", "merge"],
+    reflect_cmap=cm.get_cmap("gray"),
+    fluo_cmap=cm.get_cmap("turbo"),
+    fluo_only_cmap=cm.get_cmap("magma"),
+    reflect_norm=plt.matplotlib.colors.Normalize(vmin=0, vmax=255),
+    fluo_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=40),  # in z units
+    fluo_only_norm=plt.matplotlib.colors.Normalize(vmin=6, vmax=30),  # in z units
+    vid_paths: dict={
         "reflectance": "reflectance.mp4",
         "fluorescence": "fluorescence.mp4",
         "merge": "merge.mp4",
     },
-    save_path: str = "_proc",
+    save_path: str="_proc",
 ) -> None:
     # TODO: assert that all cams have same frame size
-    from markovids.vid.io import (
-        get_bground,
-        downsample_frames,
-        read_timestamps_multicam,
-        read_frames_multicam,
-        MP4WriterPreview,
-        pseudocolor_frames,
-    )
-    from markovids.vid.util import bp_filter, sos_filter, video_montage
 
     cameras = list(dat_paths.values())
     vid_montage_nrows = int(np.ceil(len(cameras) / vid_montage_ncols))

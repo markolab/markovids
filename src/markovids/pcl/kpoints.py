@@ -3,10 +3,11 @@ import warnings
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
 from scipy.sparse import csr_matrix, diags
-from typing import List, Dict, Tuple, Optional
+from scipy.interpolate import interp1d
+from typing import Any, List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from tqdm.auto import tqdm
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, KernelPCA
 from sklearn.cluster import KMeans
 
 
@@ -231,7 +232,7 @@ def estimate_bone_lengths_from_data(
                 bone_length = np.linalg.norm(pos2 - pos1)
 
                 # Basic sanity check
-                if 1.0 < bone_length < 200.0:  # Between 1mm and 200mm
+                if 1.0 < bone_length < 200.0:  # Between 1mm and 200mm TODO This should work still, but we pass before converting to mm
                     bone_measurements[bone_names].append(bone_length)
 
     # Compute statistics for each bone
@@ -664,6 +665,7 @@ class SlidingWindowTemporalRegularization:
             end = min(start + self.window_size, n_frames)
 
             # Process window
+            #TODO we don't use window_conf here?
             window_result, window_conf = self.base_regularizer.optimize_trajectory(
                 observations[start:end], confidences[start:end], mask[start:end]
             )
@@ -948,7 +950,6 @@ class PoseAligner:
         
         return original
 
-
 class PCAImputer:
     """
     PCA-based imputation for aligned pose data.
@@ -956,7 +957,7 @@ class PCAImputer:
     
     def __init__(self, n_components=10, n_iterations=10,
                  use_kmeans_sampling=False, n_clusters=1000, samples_per_cluster=1,
-                 transform_z=False):
+                 transform_z=False, kernel_pca_args_ = None, threshold=None, mse_check=False):
         """
         Initialize the PCA imputer.
         """
@@ -968,6 +969,9 @@ class PCAImputer:
         self.transform_z = transform_z
         self.pca_ = None
         self.n_keypoints_ = None
+        self.kernel_pca_args_ = kernel_pca_args_
+        self.threshold_ = threshold
+        self.mse_check = mse_check
     
     def _transform_z_coords(self, data):
         """Apply signed sqrt transformation to Z coordinates."""
@@ -994,8 +998,8 @@ class PCAImputer:
             original[:, z_idx] = np.sign(z_vals) * (z_vals ** 2)
         
         return original
-    
-    def impute(self, aligned_keypoints, aligner=None):
+
+    def impute(self, aligned_keypoints, aligner=None, set_zero=False):
         """
         Impute missing keypoints using iterative PCA.
         
@@ -1029,9 +1033,19 @@ class PCAImputer:
                                             imputed[frame_idx, kp_idx * 3 + dim] = frame_data[neighbor_idx, dim]
                                         break
         
-        # Fill remaining NaNs with 0
-        imputed[missing_mask] = 0
-        
+        if set_zero:
+            imputed[missing_mask] = 0
+        else:
+            # Replace 'imputed[missing_mask] = 0' with:
+            col_means = np.nanmean(imputed, axis=0)
+
+            # Fallback: if a specific keypoint coordinate is NaN in EVERY frame, set its mean to 0
+            col_means[np.isnan(col_means)] = 0 
+
+            # Fill missing values with their respective column means
+            inds = np.where(missing_mask)
+            imputed[inds] = col_means[inds[1]]
+
         # K-means sampling if requested
         pca_training_data = None
         if self.use_kmeans_sampling:
@@ -1060,6 +1074,8 @@ class PCAImputer:
                     
                     pca_training_data = np.array(sampled_frames)
                 print(f"Using {len(pca_training_data)} frames for PCA training")
+
+            
         
         # Apply Z transformation if requested
         if self.transform_z:
@@ -1068,29 +1084,111 @@ class PCAImputer:
                 pca_training_data = self._transform_z_coords(pca_training_data)
         
         # Iterative PCA imputation
+
+        if self.kernel_pca_args_ is not None:
+            self.kernel_pca_args_['fit_inverse_transform'] = True
+
+        is_kernel = self.kernel_pca_args_ is not None
+
+        # TODO add a stopping criterion (MSE on observed data current iteration - mse on observed data)
+        # for iter_num in range(self.n_iterations):
+        #     if pca_training_data is not None and iter_num == 0:
+        #         if is_kernel:
+        #             self.pca_ = KernelPCA(n_components=min(self.n_components, min(pca_training_data.shape) - 1), **self.kernel_pca_args_)
+        #         else:
+        #             self.pca_ = PCA(n_components=min(self.n_components, min(pca_training_data.shape) - 1))
+        #         self.pca_.fit(pca_training_data)
+        #         transformed = self.pca_.transform(imputed)
+        #     else:
+        #         if is_kernel:
+        #             self.pca_ = KernelPCA(n_components=min(self.n_components, min(imputed.shape) - 1), **self.kernel_pca_args_)
+        #         else:
+        #             self.pca_ = PCA(n_components=min(self.n_components, min(imputed.shape) - 1))
+        #         transformed = self.pca_.fit_transform(imputed)
+            
+        #     reconstructed = self.pca_.inverse_transform(transformed)
+        #     imputed[missing_mask] = reconstructed[missing_mask]
+            
+        #     if iter_num == self.n_iterations - 1:
+        #         # Handle reporting based on model type
+        #         if not is_kernel:
+        #             variance_explained = np.sum(self.pca_.explained_variance_ratio_)
+        #             print(f"PCA: {self.pca_.n_components_} components explain {variance_explained:.1%} of variance")
+        #         else:
+        #             print(f"KernelPCA: Fitted with {self.pca_.n_components} components.")
+                    
+        #         reconstruction_error = np.mean((imputed[~missing_mask] - reconstructed[~missing_mask])**2)
+        #         print(f"Reconstruction MSE: {reconstruction_error:.6f}")
+
+        best_imputed = imputed.copy()
+        prev_observed_mse = float('inf')
+
         for iter_num in range(self.n_iterations):
+            # 1. Selection of PCA Model and Fitting
             if pca_training_data is not None and iter_num == 0:
-                self.pca_ = PCA(n_components=min(self.n_components, min(pca_training_data.shape) - 1))
+                # First pass uses the high-quality training prior
+                n_comp = min(self.n_components, min(pca_training_data.shape) - 1)
+                if is_kernel:
+                    self.pca_ = KernelPCA(n_components=n_comp, **self.kernel_pca_args_) # TODO will want to downsample, find the number necessary
+                else:
+                    self.pca_ = PCA(n_components=n_comp)
+                
                 self.pca_.fit(pca_training_data)
                 transformed = self.pca_.transform(imputed)
             else:
-                self.pca_ = PCA(n_components=min(self.n_components, min(imputed.shape) - 1))
+                # Subsequent passes adapt to the specific animal in this session
+                n_comp = min(self.n_components, min(imputed.shape) - 1)
+                if is_kernel:
+                    self.pca_ = KernelPCA(n_components=n_comp, **self.kernel_pca_args_)
+                else:
+                    self.pca_ = PCA(n_components=n_comp)
+                
                 transformed = self.pca_.fit_transform(imputed)
             
             reconstructed = self.pca_.inverse_transform(transformed)
+
+            # This is our validation metric to ensure the skeleton isn't warping
+            observed_mse = np.mean((imputed[~missing_mask] - reconstructed[~missing_mask])**2)
+
+            # if self.threshold_ is not None:
+            #     # Case A: Error exceeds the user-defined hard limit
+            #     if observed_mse > self.threshold_:
+            #         print(f"Stopping at iter {iter_num}: Observed MSE {observed_mse:.6f} > Threshold {self.threshold_}")
+            #         imputed = best_imputed
+            #         break
+                
+            # Case B: Error is getting worse compared to the previous iteration (Overfitting)
+            if self.mse_check and iter_num > 0 and observed_mse > prev_observed_mse:
+                print(f"Stopping at iter {iter_num}: Divergence detected ({observed_mse:.6f} > {prev_observed_mse:.6f})")
+                imputed = best_imputed
+                break
+
+            # Save a copy of the data BEFORE we update the missing holes
+            best_imputed = imputed.copy()
             imputed[missing_mask] = reconstructed[missing_mask]
-            
+            prev_observed_mse = observed_mse
+
+            # 6. Final Iteration Reporting
             if iter_num == self.n_iterations - 1:
-                variance_explained = np.sum(self.pca_.explained_variance_ratio_)
-                reconstruction_error = np.mean((imputed[~missing_mask] - reconstructed[~missing_mask])**2)
-                print(f"PCA: {self.pca_.n_components_} components explain {variance_explained:.1%} of variance")
-                print(f"PCA: Reconstruction MSE: {reconstruction_error:.6f}")
+                if not is_kernel:
+                    variance_explained = np.sum(self.pca_.explained_variance_ratio_)
+                    print(f"PCA: {self.pca_.n_components_} components explain {variance_explained:.1%} variance")
+                else:
+                    print(f"KernelPCA: {self.pca_.n_components} components.")
+                
+                print(f"Final Reconstruction MSE (Observed): {observed_mse:.6f}")
         
         # Inverse Z transformation
         if self.transform_z:
             imputed = self._inverse_transform_z_coords(imputed)
         
-        return imputed.reshape(n_frames, n_keypoints, 3)
+        # Reshape to (n_frames, n_keypoints, 3) before returning
+        imputed = imputed.reshape(n_frames, n_keypoints, 3)
+        
+        # Ensure Z-values are non-negative (clip below zero to zero)
+        imputed[:, :, 2] = np.maximum(0, imputed[:, :, 2])
+        
+        return imputed # .reshape(n_frames, n_keypoints, 3)
     
     def transform(self, aligned_keypoints):
         """Transform aligned keypoints to PCA space."""
@@ -1333,6 +1431,416 @@ def hampel_filter(keypoints, was_imputed, window_size=5, n_sigmas=3):
     return filtered, outlier_mask
 
 
+class Interpolator:
+    """
+    Fill small NaN gaps in keypoint trajectories using scipy interpolation.
+
+    For each keypoint independently, detects contiguous blocks of NaN frames
+    and fills those that are ≤ ``length_threshold`` frames long using spline
+    (or other scipy) interpolation anchored on nearby valid observations.
+
+    Parameters
+    ----------
+    length_threshold : int
+        Maximum gap size (in frames) to interpolate.  Gaps longer than this
+        are left as NaN for downstream imputation (e.g. PCA).
+    method : str
+        Interpolation kind passed to ``scipy.interpolate.interp1d``.
+        Recommended: ``"slinear"`` (linear spline).  Other options include
+        ``"linear"``, ``"cubic"``, ``"nearest"``.
+    window : int
+        Number of valid frames on each side of a gap to use as anchors for
+        the interpolator.  Larger windows give the interpolator more context
+        but are slower.
+    """
+
+    def __init__(self, length_threshold: int = 10, method: str = "slinear",
+                 window: int = 250, low_gap_keys: Optional[List] = None):
+        self.length_threshold = length_threshold
+        self.method = method
+        self.window = window
+        self.low_gap_keys = low_gap_keys
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def interpolate(
+        self, data: np.ndarray, confidence: Optional[np.ndarray] = None
+    ) -> Tuple[np.ndarray, Dict[int, List[Tuple[int, int]]], Optional[np.ndarray]]:
+        """
+        Interpolate small NaN gaps in-place (on a copy).
+
+        Parameters
+        ----------
+        data : ndarray, shape (n_frames, n_keypoints, 3)
+            Keypoint coordinates.  NaN marks missing values.
+        confidence : ndarray or None, shape (n_frames, n_keypoints)
+            Per-frame, per-keypoint confidence scores.  If provided, the
+            confidence of interpolated frames is set to the mean confidence
+            of the anchor indices used for the interpolation.
+
+        Returns
+        -------
+        fixed_data : ndarray, same shape as *data*
+            Copy of *data* with small gaps filled.
+        fixed_log : dict  {kp_idx: [(start, end), ...]}
+            Which blocks were filled, per keypoint.
+        fixed_confidence : ndarray or None
+            Updated confidence array (copy), or ``None`` if *confidence*
+            was not supplied.
+        """
+        nan_blocks = self._find_nan_blocks(data)
+        fixed_data, fixed_log = self._interpolate_gaps(data, nan_blocks)
+
+        fixed_confidence = None
+        if confidence is not None:
+            fixed_confidence = confidence.copy()
+            for kp_idx, blocks in fixed_log.items():
+                for start, end in blocks:
+                    # Anchor indices: valid frames within self.window of the gap
+                    kp_valid = np.where(~np.isnan(data[:, kp_idx, 0]))[0]
+                    local = kp_valid[
+                        (kp_valid >= start - self.window)
+                        & (kp_valid <= end + self.window)
+                    ]
+                    if len(local) > 0:
+                        avg_conf = confidence[local, kp_idx].mean()
+                    else:
+                        avg_conf = 0.0
+                    fixed_confidence[start:end, kp_idx] = avg_conf
+
+        return fixed_data, fixed_log, fixed_confidence
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_nan_blocks(data: np.ndarray) -> Dict[int, List[Tuple[int, int]]]:
+        """
+        Detect contiguous NaN blocks per keypoint.
+
+        Parameters
+        ----------
+        data : ndarray, shape (n_frames, n_keypoints, 3)
+
+        Returns
+        -------
+        nan_blocks : dict  {kp_idx: [(start, end), ...]}
+            ``start`` is inclusive, ``end`` is exclusive.
+        """
+        n_time, n_keypoints, _ = data.shape
+        nan_blocks: Dict[int, List[Tuple[int, int]]] = {}
+
+        for k in range(n_keypoints):
+            kp_mask = np.isnan(data[:, k, :]).any(axis=1)
+            padded = np.concatenate([[False], kp_mask, [False]])
+            diff = np.diff(padded.astype(int))
+            starts = np.where(diff == 1)[0]
+            ends = np.where(diff == -1)[0]
+            blocks = list(zip(starts.tolist(), ends.tolist()))
+            if blocks:
+                nan_blocks[k] = blocks
+
+        return nan_blocks
+
+    def _interpolate_gaps(
+        self, data: np.ndarray, nan_blocks: Dict[int, List[Tuple[int, int]]]
+    ) -> Tuple[np.ndarray, Dict[int, List[Tuple[int, int]]]]:
+        """
+        Fill gaps ≤ ``self.length_threshold`` using ``interp1d``.
+
+        Returns
+        -------
+        fixed_data : ndarray
+        fixed_log : dict  {kp_idx: [(start, end), ...]}
+        """
+        n_time = data.shape[0]
+        fixed_data = data.copy()
+        fixed_log: Dict[int, List[Tuple[int, int]]] = {}
+
+        min_pts = 4 if self.method == "cubic" else 2
+
+        for kp_idx, blocks in nan_blocks.items():
+            kp_valid = np.where(~np.isnan(data[:, kp_idx, 0]))[0]
+            if len(kp_valid) < 2:
+                continue
+
+            blocks_filled: List[Tuple[int, int]] = []
+
+            for start, end in blocks:
+                gap_len = end - start
+                if gap_len > self.length_threshold:
+                    continue
+                # Skip boundary gaps (no anchor on one side)
+                if start == 0 or end >= n_time:
+                    continue
+
+                if (self.low_gap_keys is not None) and \
+                    (kp_idx in self.low_gap_keys) and \
+                    (gap_len <= 5):
+
+                    continue
+
+                # Local valid anchors within self.window of the gap
+                local_valid = kp_valid[
+                    (kp_valid >= start - self.window)
+                    & (kp_valid <= end + self.window)
+                ]
+                # Must have anchors on both sides of the gap
+                if (len(local_valid) == 0
+                        or local_valid[0] > start
+                        or local_valid[-1] < end):
+                    continue
+                if len(local_valid) < min_pts:
+                    continue
+
+                t_gap = np.arange(start, end)
+                for axis in range(3):
+                    y_valid = data[local_valid, kp_idx, axis]
+                    f = interp1d(local_valid, y_valid, kind=self.method,
+                                 fill_value="extrapolate")
+                    fixed_data[start:end, kp_idx, axis] = f(t_gap)
+
+                blocks_filled.append((start, end))
+
+            if blocks_filled:
+                fixed_log[kp_idx] = blocks_filled
+
+        return fixed_data, fixed_log
+
+
+# ------------------------------------------------------------------
+# Lightweight VAE module for inference (no dependency on train_vae.py)
+# ------------------------------------------------------------------
+
+def _build_vae(input_dim, coord_dim, hidden_sizes, latent_dim=16, dropout=0.1):
+    """Build a ``DenoisingVAE`` nn.Module from config parameters.
+
+    The architecture mirrors ``train_vae.py`` so that checkpoints are
+    compatible, but avoids importing that training script at runtime.
+    """
+    import torch
+    import torch.nn as nn
+
+    class DenoisingVAE(nn.Module):
+        def __init__(self):
+            super().__init__()
+            # ── Encoder ──
+            enc_layers = []
+            prev = input_dim
+            for h in hidden_sizes:
+                enc_layers.append(nn.Linear(prev, h))
+                enc_layers.append(nn.LayerNorm(h))
+                enc_layers.append(nn.ReLU())
+                enc_layers.append(nn.Dropout(dropout))
+                prev = h
+            self.encoder = nn.Sequential(*enc_layers)
+            self.fc_mu = nn.Linear(prev, latent_dim)
+            self.fc_logvar = nn.Linear(prev, latent_dim)
+            # ── Decoder ──
+            dec_layers = []
+            prev = latent_dim
+            for h in reversed(hidden_sizes):
+                dec_layers.append(nn.Linear(prev, h))
+                dec_layers.append(nn.LayerNorm(h))
+                dec_layers.append(nn.ReLU())
+                dec_layers.append(nn.Dropout(dropout))
+                prev = h
+            dec_layers.append(nn.Linear(prev, coord_dim))
+            self.decoder = nn.Sequential(*dec_layers)
+
+        def encode(self, x):
+            h = self.encoder(x)
+            return self.fc_mu(h), self.fc_logvar(h)
+
+        def reparameterize(self, mu, logvar):
+            if self.training:
+                std = torch.exp(0.5 * logvar)
+                return mu + std * torch.randn_like(std)
+            return mu
+
+        def forward(self, x):
+            mu, logvar = self.encode(x)
+            z = self.reparameterize(mu, logvar)
+            return self.decoder(z), mu, logvar
+
+    return DenoisingVAE()
+
+
+class AutoencoderImputer:
+    """
+    Autoencoder-based imputation for aligned pose data.
+
+    Loads a trained DenoisingAutoencoder checkpoint and uses it to reconstruct
+    missing keypoints.
+
+    The autoencoder expects ``(batch, K*3 + K)`` inputs: z-scored coordinates
+    concatenated with a binary mask channel (1 = observed, 0 = missing).
+
+    Parameters
+    ----------
+    checkpoint_path : str
+        Path to the ``.pt`` checkpoint saved by ``ImputationModel.save()``.
+    device : str
+        Torch device (``"cpu"`` or ``"cuda"``).  The model is moved once
+        at init time.
+    batch_size : int
+        Number of frames processed per forward pass.
+    """
+
+    def __init__(
+        self,
+        checkpoint_path: str,
+        device: str = "cpu",
+        batch_size: int = 4096,
+    ):
+        self.checkpoint_path = checkpoint_path
+        self.device = device
+        self.batch_size = batch_size
+
+        self._model, self._mean, self._std, self._config = self._load_checkpoint(
+            checkpoint_path, device
+        )
+        self._is_vae = self._config.get("model_type", "ae") == "vae"
+
+    # ------------------------------------------------------------------
+    # Checkpoint loading
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _load_checkpoint(path: str, device: str = "cpu"):
+        """Load model weights, scaler stats and config from a ``.pt`` file.
+
+        The checkpoint is expected to contain:
+        - ``model_state_dict`` — model state dict (AE or VAE)
+        - ``mean``, ``std`` — (K*3,) numpy arrays for z-scoring
+        - ``config`` — dict with at least ``hidden_sizes`` and ``dropout``
+        - ``model_type`` (optional) — ``"vae"`` selects the VAE architecture;
+          anything else (or absent) selects the plain autoencoder.
+        """
+        import torch
+        import torch.nn as nn
+
+        ckpt = torch.load(path, map_location=device, weights_only=False)
+        config = ckpt["config"]
+
+        mean = np.asarray(ckpt["mean"], dtype=np.float32)
+        std = np.asarray(ckpt["std"], dtype=np.float32)
+        coord_dim = mean.shape[0]
+        n_keypoints = coord_dim // 3
+        input_dim = coord_dim + n_keypoints
+
+        hidden_sizes = config["hidden_sizes"]
+        dropout = config.get("dropout", 0.1)
+        model_type = ckpt.get("model_type", "ae")
+
+        if model_type == "vae":
+            model = _build_vae(
+                input_dim, coord_dim, hidden_sizes,
+                latent_dim=config.get("latent_dim", 16),
+                dropout=dropout,
+            )
+        else:
+            layers = []
+            prev = input_dim
+            for h in hidden_sizes:
+                layers.append(nn.Linear(prev, h))
+                layers.append(nn.BatchNorm1d(h))
+                layers.append(nn.ReLU())
+                layers.append(nn.Dropout(dropout))
+                prev = h
+            layers.append(nn.Linear(prev, coord_dim))
+            model = nn.Sequential(*layers)
+
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.to(device).eval()
+
+        config["model_type"] = model_type
+        return model, mean, std, config
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def impute(
+        self,
+        aligned_keypoints: np.ndarray,
+        aligner=None,
+        confidence: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """
+        Impute missing keypoints using the denoising autoencoder.
+
+        Parameters
+        ----------
+        aligned_keypoints : ndarray, shape ``(N, K, 3)``
+            Keypoints in **aligned** space.  NaN marks missing values.
+        aligner : PoseAligner or None
+            Not used by the autoencoder (accepted for API compatibility with
+            ``PCAImputer.impute``).
+        confidence : ndarray or None, shape ``(N, K)``
+            Unused. Accepted for API compatibility.
+
+        Returns
+        -------
+        imputed : ndarray, shape ``(N, K, 3)``
+            Imputed keypoints in aligned space.
+        """
+        import torch
+
+        n_frames, n_keypoints, _ = aligned_keypoints.shape
+        data = aligned_keypoints.copy()
+
+        # ── Flatten to (N, K*3) ──────────────────────────────────────
+        flat = data.reshape(n_frames, -1).astype(np.float32)  # (N, K*3)
+        nan_mask = np.isnan(flat)
+
+        # Build binary mask channel: 1 = observed, 0 = missing
+        kp_nan = np.isnan(data[:, :, 0])  # (N, K) — True where missing
+        obs_mask = (~kp_nan).astype(np.float32)  # (N, K)
+
+        # Replace NaN with 0 before scaling
+        flat_clean = np.nan_to_num(flat, nan=0.0)
+
+        # Z-score scale
+        eps = 1e-8
+        x_scaled = (flat_clean - self._mean) / (self._std + eps)
+
+        # Concatenate mask channel → (N, K*3 + K)
+        x_input = np.concatenate([x_scaled, obs_mask], axis=1)
+
+        # ── Batched inference ────────────────────────────────────────
+        device = self.device
+        y_scaled_all = np.empty_like(flat)
+
+        with torch.no_grad():
+            for i in range(0, n_frames, self.batch_size):
+                batch = torch.from_numpy(
+                    x_input[i : i + self.batch_size]
+                ).to(device)
+                out = self._model(batch)
+                # VAE returns (recon, mu, logvar); plain AE returns a tensor
+                if isinstance(out, tuple):
+                    out = out[0]
+                y_scaled_all[i : i + self.batch_size] = out.cpu().numpy()
+
+        # Un-scale
+        y_raw = y_scaled_all * (self._std + eps) + self._mean
+
+        # ── Merge: keep observed values, fill only missing ones ──────
+        imputed_flat = flat_clean.copy()
+        imputed_flat[nan_mask] = y_raw[nan_mask]
+
+        imputed = imputed_flat.reshape(n_frames, n_keypoints, 3)
+
+        # Ensure Z-values are non-negative (same convention as PCAImputer)
+        imputed[:, :, 2] = np.maximum(0, imputed[:, :, 2])
+
+        return imputed
+
+
 def smooth_all_keypoints(
     kpoints, conf, max_gap_fill=5, use_sliding_window=False, sliding_window_threshold=10000, **kwargs
 ):
@@ -1360,18 +1868,55 @@ def smooth_all_keypoints(
     return smoothed_kpoints, smoothed_conf
 
 
-def edge_weight_map(keypoints_xy, image_shape=(640, 480), edge_margin=50, mode='quadratic'):
+# def edge_weight_map(keypoints_xy, image_shape=(640, 480), edge_margin=50, mode='quadratic'):
+#     """
+#     Compute attenuation factors for keypoints based on proximity to image edges.
+
+#     Parameters:
+#         keypoints_xy: (N, 2) array of (x, y) keypoint coordinates
+#         image_shape: (H, W) of the depth frame
+#         edge_margin: pixels from edge to start full attenuation (e.g., 20 px)
+#         mode: 'linear', 'quadratic', or 'sigmoid' falloff
+
+#     Returns:
+#         edge_weights: (N,) array in [0, 1], 1 = fully trusted, 0 = near edge
+#     """
+#     w, h = image_shape
+#     x = keypoints_xy[:, 0]
+#     y = keypoints_xy[:, 1]
+
+#     # Distance from each edge
+#     left = x
+#     right = w - x
+#     top = y
+#     bottom = h - y
+#     min_edge_dist = np.minimum(np.minimum(left, right), np.minimum(top, bottom))
+
+#     norm = np.clip(min_edge_dist / edge_margin, 0.1, 1) #TODO See if this makes keypoints disappear
+
+#     if mode == 'linear':
+#         return norm
+#     elif mode == 'quadratic':
+#         return norm**2
+#     elif mode == 'sigmoid':
+#         return 1 / (1 + np.exp(-6 * (norm - 0.5)))
+#     else:
+#         raise ValueError(f"Unknown edge weight mode: {mode}")
+
+def edge_weight_map(keypoints_xy, confidences, image_shape=(640, 480), edge_margin=50, mode='quadratic', confidence_threshold=0.5):
     """
-    Compute attenuation factors for keypoints based on proximity to image edges.
+    Compute attenuation factors for keypoints based on proximity to image edges, with downweighting applied only to low-confidence keypoints.
 
     Parameters:
         keypoints_xy: (N, 2) array of (x, y) keypoint coordinates
+        confidences: (N,) array of confidence values for each keypoint
         image_shape: (H, W) of the depth frame
-        edge_margin: pixels from edge to start full attenuation (e.g., 20 px)
+        edge_margin: Pixels from edge to start full attenuation (e.g., 50 px)
         mode: 'linear', 'quadratic', or 'sigmoid' falloff
+        confidence_threshold: Confidence threshold below which keypoints are downweighted near the edges
 
     Returns:
-        edge_weights: (N,) array in [0, 1], 1 = fully trusted, 0 = near edge
+        edge_weights: (N,) array in [0, 1], representing weights adjusted for low-confidence keypoints near the edges
     """
     w, h = image_shape
     x = keypoints_xy[:, 0]
@@ -1384,13 +1929,22 @@ def edge_weight_map(keypoints_xy, image_shape=(640, 480), edge_margin=50, mode='
     bottom = h - y
     min_edge_dist = np.minimum(np.minimum(left, right), np.minimum(top, bottom))
 
-    norm = np.clip(min_edge_dist / edge_margin, 0, 1)
+    # Normalize edge distances
+    norm = np.clip(min_edge_dist / edge_margin, 0.1, 1)
 
+    # Compute edge-based weight falloff
     if mode == 'linear':
-        return norm
+        edge_weights = norm
     elif mode == 'quadratic':
-        return norm**2
+        edge_weights = norm**2
     elif mode == 'sigmoid':
-        return 1 / (1 + np.exp(-6 * (norm - 0.5)))
+        edge_weights = 1 / (1 + np.exp(-6 * (norm - 0.5)))
     else:
         raise ValueError(f"Unknown edge weight mode: {mode}")
+
+    # Apply downweighting only to low-confidence keypoints
+    low_conf_mask = confidences < confidence_threshold
+    final_weights = confidences.copy()
+    final_weights[low_conf_mask] = edge_weights[low_conf_mask] * confidences[low_conf_mask]
+
+    return final_weights

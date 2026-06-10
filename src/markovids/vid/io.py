@@ -164,6 +164,7 @@ class AviWriter:
         threads=6,
         slices=25,
         slicecrc=1,
+        prepend_args=None
     ):
         ext = os.path.splitext(filepath)[1]
         if ext != ".avi":
@@ -178,6 +179,7 @@ class AviWriter:
         self.frame_size = frame_size
         self.dtype = dtype
         self.pipe = None
+        self.prepend_args = prepend_args
 
     def open(self):
         command = [
@@ -206,10 +208,15 @@ class AviWriter:
             str(self.slicecrc),
             "-r",
             str(self.fps),
-            self.filepath,
+            f"'{self.filepath}'",
         ]
 
-        self.pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
+        
+        full_cmd = " ".join(command)
+        if self.prepend_args is not None:
+            full_cmd = f"{self.prepend_args} ; {full_cmd}"
+
+        self.pipe = subprocess.Popen(full_cmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, executable='/bin/bash')
 
     def write_frames(self, frames, progress_bar=True):  # may need to enforce endianness...
         if self.pipe is None:
@@ -497,14 +504,16 @@ class AviReader:
         threads=None,
         intrinsic_matrix=None,
         distortion_coeffs=None,
+        prepend_args=None,
         **kwargs,
     ):
         self.filepath = filepath
         self.threads = threads
         self.intrinsic_matrix = intrinsic_matrix
         self.distortion_coeffs = distortion_coeffs
+        self.prepend_args = prepend_args
         self.get_file_info()
-
+        
     def open(self):
         pass
 
@@ -520,11 +529,19 @@ class AviReader:
             "stream=width,height,pix_fmt,r_frame_rate,bits_per_raw_sample,nb_frames",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-            self.filepath,
+            f'"{self.filepath}"',
             "-sexagesimal",
         ]
 
-        ffmpeg = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        # activate = "source ~/conda_activate"
+        ffprobe_cmd = " ".join(command)
+        
+        if self.prepend_args is None:
+            full_cmd = ffprobe_cmd
+        else:
+            full_cmd = f"{self.prepend_args} ; {ffprobe_cmd}"
+
+        ffmpeg = subprocess.Popen(full_cmd, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, executable='/bin/bash')
         out, err = ffmpeg.communicate()
         if err:
             print(err)
@@ -532,8 +549,8 @@ class AviReader:
         self.frame_size = (int(out[0]), int(out[1]))
         self.pixel_format = out[2]
         self.fps = float(out[3].split("/")[0]) / float(out[3].split("/")[1])
-        self.bit_depth = int(out[4])
-        self.nframes = int(out[5])
+        self.bit_depth = int(out[4]) if out[4] != "N/A" else 8 # TODO we will just default to 8 for now
+        self.nframes = int(out[5]) if out[5] != "N/A" else 200000 # TODO better handling
 
         if self.bit_depth == 16:
             self.dtype = np.dtype("<u2")
@@ -631,12 +648,12 @@ class AviReader:
                "-threads",
                 str(self.threads),
                 "-i", 
-                self.filepath, 
+                f'"{self.filepath}"', 
             ]
         else:
             input_opts1 = [
                 "-i", 
-                self.filepath, 
+                f'"{self.filepath}"', 
             ]
 
         command = (
@@ -659,7 +676,16 @@ class AviReader:
             ]
         )
 
-        pipe = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        # activate = "source ~/conda_activate"
+        ffprobe_cmd = " ".join(command)
+
+        if self.prepend_args is None:
+            full_cmd = ffprobe_cmd
+        else:
+            full_cmd = f"{self.prepend_args} ; {ffprobe_cmd}"
+        # full_cmd = f"{activate} ; {ffprobe_cmd}"
+
+        pipe = subprocess.Popen(full_cmd, stderr=subprocess.PIPE, shell=True, stdout=subprocess.PIPE, executable='/bin/bash')
         out, err = pipe.communicate()
         if err:
             print("error", err)
@@ -779,6 +805,14 @@ def fill_timestamps(
     new_timestamps.index = new_timestamps.index.astype("int")
     # new_timestamps.index = range(len(new_timestamps))  # should be contiguous anyhow...
     new_timestamps["frame_index"] = new_timestamps["frame_index"].astype("Int32")
+
+
+    # TODO Drop last row if timestamp is NaN; is last frame is NaN, then
+    # it passes previous checks and doesn't interpolate
+    # 
+    # May not be a common enough issue, but if last
+    if pd.isna(new_timestamps[use_timestamp_field].iloc[-1]):
+        new_timestamps = new_timestamps.iloc[:-1]
 
     return new_timestamps
 

@@ -89,7 +89,6 @@ def residuals_rigid(x, points_A, points_B, points_C, weights_B, weights_C):
 
     return np.hstack([err_B.ravel(), err_C.ravel()])
 
-
 def bundle_adjust_rigid_fixed_structure(
     points_A,
     points_B,
@@ -141,6 +140,41 @@ def bundle_adjust_rigid_fixed_structure(
         "C_to_A": {"R": R_C_inv, "t": t_C_inv},
     }
 
+def estimate_transform(
+            points_A,
+            points_B,
+            points_C,
+            weights_B=None,
+            weights_C=None,
+            huber_delta=5.0,
+            jac_sparsity=None,
+            **kwargs,):
+
+    N = points_A.shape[0]
+
+    if weights_B is None:
+        weights_B = np.ones(N)
+    if weights_C is None:
+        weights_C = np.ones(N)
+
+    # Estimate initial R, t (from B → A and C → A)
+    R_B, t_B = estimate_rigid_transform(points_A, points_B)
+    R_C, t_C = estimate_rigid_transform(points_A, points_C)
+    rv_B = Rotation.from_matrix(R_B).as_rotvec()
+    rv_C = Rotation.from_matrix(R_C).as_rotvec()
+
+    # Invert to get B → A and C → A
+    R_B_inv = R_B.T
+    t_B_inv = -R_B_inv @ t_B
+    R_C_inv = R_C.T
+    t_C_inv = -R_C_inv @ t_C
+
+    return {
+        "points_3d": points_A,
+        "B_to_A": {"R": R_B_inv, "t": t_B_inv},
+        "C_to_A": {"R": R_C_inv, "t": t_C_inv},
+    }
+
 
 def invert_similarity_transform(R, t, s):
     R_inv = R.T
@@ -152,6 +186,41 @@ def invert_similarity_transform(R, t, s):
 # -----------------------------
 # Residuals: fixed structure + similarity
 # -----------------------------
+
+def estimate_similarity_transform(A, B):
+    assert A.shape == B.shape
+    N = A.shape[0]
+
+    # Compute centroids
+    centroid_A = np.mean(A, axis=0)
+    centroid_B = np.mean(B, axis=0)
+
+    # Center the points
+    AA = A - centroid_A
+    BB = B - centroid_B
+
+    # Compute covariance matrix
+    H = AA.T @ BB / N
+
+    # SVD
+    U, S, Vt = np.linalg.svd(H)
+    R = Vt.T @ U.T
+
+    # Reflection correction
+    if np.linalg.det(R) < 0:
+        Vt[-1, :] *= -1
+        R = Vt.T @ U.T
+
+    # Compute scale
+    var_A = np.var(AA, axis=0).sum()
+    s = (S @ np.ones(3)) / var_A
+
+    # Translation
+    t = centroid_B - s * R @ centroid_A
+
+    return s, R, t
+
+
 def residuals_similarity_fixed(x, points_A, points_B, points_C, weights_B, weights_C):
     rv_B = x[0:3]
     t_B = x[3:6]
