@@ -20,12 +20,13 @@ class CustomFFMpegWriter(FFMpegWriter):
         ffmpeg_cmd = ' '.join(_args)
         # for i, arg in enumerate(self._args()):
         #     print(f"{i} : {arg}")
-        shell_cmd = f"source ~/conda_activate && {ffmpeg_cmd}"
+        # don't need this, just run from the current environment...
+        # shell_cmd = f"source ~/conda_activate && {ffmpeg_cmd}"
 
         # Start the process with bash
         # Start the process with bash -c to handle `source`
         self._proc = subprocess.Popen(
-            ["bash", "-c", shell_cmd],
+            ["bash", "-c", ffmpeg_cmd],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
