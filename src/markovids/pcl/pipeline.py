@@ -650,7 +650,7 @@ def registration_pipeline(
             pcl.viz.visualize_xyz_trajectories_to_mp4(
                 merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
                 os.path.join(output_path,movie_file),
-                fps=100,
+                fps=100, # REMOVE HARD-CODING!
                 frame_ids=frame_ids,
                 **renderer_kwargs,
             )
@@ -658,7 +658,7 @@ def registration_pipeline(
             pcl.viz.visualize_xyz_trajectories_vedo(
                 merged_data_proj_smooth[arr_slice, plt_kpoints_idx],
                 os.path.join(output_path, movie_file),
-                fps=100,
+                fps=100, # REMOVE HARD-CODING!
                 frame_ids=frame_ids,
                 **renderer_kwargs,
             )

@@ -912,6 +912,8 @@ def read_timestamps_multicam(
         ts[_cam]["frame_id"] = ts[_cam]["frame_id"].astype("Int32")
         ts[_cam]["frame_index"] = ts[_cam]["frame_index"].astype("Int32")
 
+    if len(cameras) == 1:
+        return ts
     # find a common frame id after burn_in frames
     # here, we assume the first 100-200 frames may have
     # initialization issues typical with machine vision cams

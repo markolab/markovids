@@ -552,10 +552,20 @@ def sync_depth_videos(
     # need paths to timestamps and avi
     ts_paths = {os.path.join(data_dir, f"{_cam}.txt"): _cam for _cam in cameras}
     avi_paths = [os.path.join(data_dir, f"{_cam}.avi") for _cam in cameras]
-    ts, merged_ts = read_timestamps_multicam(
-        ts_paths,
-        **timestamp_kwargs,
-    )
+
+    # TODO: WIRE IN BYPASS HERE FOR ONE CAM
+    if len(cameras) > 1:
+        ts, merged_ts = read_timestamps_multicam(
+            ts_paths,
+            **timestamp_kwargs,
+        )
+    elif len(cameras) == 1:
+        merged_ts = read_timestamps_multicam(
+            ts_paths,
+            **timestamp_kwargs,
+        )
+    else:
+        raise RuntimeError(f"Number of cameras {len(cameras)} no supported")
 
     # sort timestamps
     column_order = [timestamp_kwargs["use_timestamp_field"]]

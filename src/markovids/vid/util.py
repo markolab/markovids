@@ -15,6 +15,9 @@ def video_montage(vids, ncols=2):
             or (_nchannels != nchannels)
         ):
             raise RuntimeError("Video dimensions not consistent")
+    
+    if len(vids) == 1:
+        return vids[0]
 
     dtype = vids[0].dtype
     nrows = np.ceil(len(vids) / ncols).astype("int")
