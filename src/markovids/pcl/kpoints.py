@@ -366,28 +366,28 @@ class TemporalRegularization:
         """Build sparse difference matrices for derivatives"""
         # First difference (velocity)
         if n_frames > 1:
-            D1 = diags([1, -1], [0, 1], shape=(n_frames - 1, n_frames), format="csr")
+            D1 = diags([1, -1], [0, 1], shape=(n_frames - 1, n_frames), format="csr", dtype="float64")
             D1 = D1 / self.dt
         else:
             D1 = csr_matrix((0, n_frames))
 
         # Second difference (acceleration)
         if n_frames > 2:
-            D2 = diags([1, -2, 1], [0, 1, 2], shape=(n_frames - 2, n_frames), format="csr")
+            D2 = diags([1, -2, 1], [0, 1, 2], shape=(n_frames - 2, n_frames), format="csr", dtype="float64")
             D2 = D2 / (self.dt**2)
         else:
             D2 = csr_matrix((0, n_frames))
 
         # Third difference (jerk)
         if n_frames > 3:
-            D3 = diags([-1, 3, -3, 1], [0, 1, 2, 3], shape=(n_frames - 3, n_frames), format="csr")
+            D3 = diags([-1, 3, -3, 1], [0, 1, 2, 3], shape=(n_frames - 3, n_frames), format="csr", dtype="float64")
             D3 = D3 / (self.dt**3)
         else:
             D3 = csr_matrix((0, n_frames))
 
         # Fourth difference (snap)
         if n_frames > 4:
-            D4 = diags([1, -4, 6, -4, 1], [0, 1, 2, 3, 4], shape=(n_frames - 4, n_frames), format="csr")
+            D4 = diags([1, -4, 6, -4, 1], [0, 1, 2, 3, 4], shape=(n_frames - 4, n_frames), format="csr", dtype="float64")
             D4 = D4 / (self.dt**4)
         else:
             D4 = csr_matrix((0, n_frames))

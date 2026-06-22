@@ -113,6 +113,9 @@ def get_bground_vals(keyps, _cam, bground_by_cam, width=640, height=480):
     return bground_vals
 
 
+# TODO: too many burned in constants, need to back this out to parameters
+# TODO: single camera support
+# TODO: this function is too much, needs to be broken up 
 def registration_pipeline(
     config_path,
     use_data_dir,
@@ -120,7 +123,9 @@ def registration_pipeline(
     intrinsics_matrix=None,
     distortion_coefficients=None,
     bground_erode_px=60,
-    min_confidence=0.4,
+    merge_min_confidence=0.4,
+    merge_distance_threshold=15,
+    transform_conf_threshold=0.65,
     z_scale=1.0,
     mp4_max_render_frames=None,
     mp4_renderer="vedo",
@@ -194,14 +199,8 @@ def registration_pipeline(
             "Need intrinsics and distortion_coefficients dictionaries to continue"
         )
 
-    # Camera intrinsics
-    cx = intrinsics_matrix[reference_camera][0, 2]
-    cy = intrinsics_matrix[reference_camera][1, 2]
-    fx = intrinsics_matrix[reference_camera][0, 0]
-    fy = intrinsics_matrix[reference_camera][1, 1]
 
     cameras = list(intrinsics_matrix.keys())
-
     metadata_path = use_data_dir if meta_path is None else meta_path
     metadata_file = os.path.join(metadata_path, "metadata.toml")
 
@@ -217,13 +216,20 @@ def registration_pipeline(
     bground_by_cam = {}
     floor_dist_cam = {}
 
+    camera_loaded = {}
     for camera in cameras:
         intrinsic_matrix = intrinsics_matrix[camera]
         distortion_coeff = distortion_coefficients[camera]
         
+        # Load in z scaling here...
         bground_file = os.path.join(use_data_dir, "_bground", f"{camera}.tiff")
-
-        bground = tifffile.imread(bground_file)
+        try:
+            bground = tifffile.imread(bground_file)
+            camera_loaded[camera] = True
+        except FileNotFoundError as e:
+            print(e)
+            camera_loaded[camera] = False
+            continue
         bground = cv2.undistort(bground, intrinsic_matrix, distortion_coeff)
         bground_roi = depth.plane.get_floor(bground.astype("float"), dilations=0)
 
@@ -234,11 +240,24 @@ def registration_pipeline(
             bground_roi, kernel
         )  # erode so we only get a big chunk of the middle
 
-        floor_distance = np.median(bground[use_bground_roi]) / 4.0 
-        
+        floor_distance = np.median(bground[use_bground_roi]) / 4.0 # HARD-CODED NEED TO FIX
         floor_dist_cam[camera] = floor_distance
-        
-        bground_by_cam[camera] = bground.T / 4.0
+        bground_by_cam[camera] = bground.T / 4.0 # TODO: HARD-CODED NEED TO FIX
+
+    # trim cameras to those that exist/we loaded
+    cameras = [_camera for _camera in cameras if camera_loaded[_camera]]
+    merge_required = len(cameras) > 1
+
+    if reference_camera not in cameras:
+        warnings.warn(f"Specified reference camera not present, setting to {cameras[0]}")
+        reference_camera = cameras[0]
+
+    # Camera intrinsics
+    # TODO: double check this block, it's immediately re-defined below...
+    cx = intrinsics_matrix[reference_camera][0, 2]
+    cy = intrinsics_matrix[reference_camera][1, 2]
+    fx = intrinsics_matrix[reference_camera][0, 0]
+    fy = intrinsics_matrix[reference_camera][1, 1]
 
     # Load 3D keypoints, computed previously
     kpoints_metadata = toml.load(
@@ -300,32 +319,8 @@ def registration_pipeline(
         kpoints_dat_conv[_cam][..., :3] = _converted
         kpoints_dat_conv[_cam][..., 3] = kpoints_dat[_cam][..., 3]
 
-    # Only include subset of nodes for transform
-    incl_kpoints_idx = [
-        kpoints_metadata["node_names"].index(_incl)
-        for _incl in incl_kpoints_fit_transform
-    ]
 
-    use_points = []
-    use_points_cam = [reference_camera]
-    use_points.append(
-        kpoints_dat_conv[reference_camera][:, incl_kpoints_idx, :].reshape(-1, 4)
-    )
-
-    for _cam in cameras:
-        if _cam == reference_camera:
-            continue
-        else:
-            use_points.append(kpoints_dat_conv[_cam][:, incl_kpoints_idx, :].reshape(-1, 4))
-            use_points_cam.append(_cam)
-
-    use_points = np.array(use_points)
-    has_nans = np.isnan(use_points).any(axis=(0, 2))
-    
-    conf_threshold = 0.65
-    high_confidence = (use_points[:3, :, 3] > conf_threshold).all(axis=0)
-    
-    excl = has_nans | (~high_confidence)
+    # transform_conf_threshold = 0.65 # TODO: hard coded, move to kwargs
 
     # excl = np.isnan(use_points[0]).any(axis=1)
     # for _points in use_points[1:]:
@@ -334,10 +329,34 @@ def registration_pipeline(
     nframes = len(kpoints_dat[cameras[0]])
     ref_index = cameras.index(reference_camera)
 
-    if transforms_path is None:
+    if (transforms_path is None) and (merge_required):
 
         print("No transforms file provided. Estimating transforms using rigid registration...")
+        # Only include subset of nodes for transform
+        incl_kpoints_idx = [
+            kpoints_metadata["node_names"].index(_incl)
+            for _incl in incl_kpoints_fit_transform
+        ]
 
+        use_points = []
+        use_points_cam = [reference_camera]
+        use_points.append(
+            kpoints_dat_conv[reference_camera][:, incl_kpoints_idx, :].reshape(-1, 4)
+        )
+
+        for _cam in cameras:
+            if _cam == reference_camera:
+                continue
+            else:
+                use_points.append(kpoints_dat_conv[_cam][:, incl_kpoints_idx, :].reshape(-1, 4))
+                use_points_cam.append(_cam)
+
+        use_points = np.array(use_points)
+        has_nans = np.isnan(use_points).any(axis=(0, 2))
+        
+
+        high_confidence = (use_points[:3, :, 3] > transform_conf_threshold).all(axis=0)
+        excl = has_nans | (~high_confidence)
         if bundle_adjust:
             result_rigid = pcl.registration.bundle_adjust_rigid_fixed_structure(
                 use_points[0][~excl, :3],
@@ -355,7 +374,6 @@ def registration_pipeline(
                 weights_C=use_points[2][~excl, 3],
             )
 
-        
         new_transforms = {}
         new_transforms[(use_points_cam[1], reference_camera)] = (
             result_rigid["B_to_A"]["R"],
@@ -366,8 +384,7 @@ def registration_pipeline(
             result_rigid["C_to_A"]["R"],
             result_rigid["C_to_A"]["t"],
         )
-
-    else:
+    elif merge_required:
         new_transforms = toml.load(transforms_path)
         # Cast the loaded lists back into NumPy arrays
         new_transforms = {
@@ -375,76 +392,87 @@ def registration_pipeline(
             for k, v in new_transforms.items()
         }
         print(f"Using transforms from file: {transforms_path}")
+    else:
+        new_transforms = {}
+        print("No merge required, skipping merge step...")
 
-    use_dat = copy.deepcopy(kpoints_dat_conv)
-    use_dat_edge = copy.deepcopy(kpoints_dat)
 
-    # weight points based on proximity to edges
-    for _cam in cameras:
-        xy = use_dat_edge[_cam][..., [0, 1, 3]].reshape(-1, 3)
-        edge_weighting = pcl.kpoints.edge_weight_map(xy[:, :2], xy[..., 2], edge_margin=25)
-        xy[:, 2] = edge_weighting
-        xy = xy.reshape(-1, nbody_parts, 3)
-        use_dat[_cam][..., 3] = xy[..., 2]
+    if merge_required:
+        use_dat = copy.deepcopy(kpoints_dat_conv)
+        use_dat_edge = copy.deepcopy(kpoints_dat)
+        # weight points based on proximity to edges
+        for _cam in cameras:
+            xy = use_dat_edge[_cam][..., [0, 1, 3]].reshape(-1, 3)
+            edge_weighting = pcl.kpoints.edge_weight_map(xy[:, :2], xy[..., 2], edge_margin=25)
+            xy[:, 2] = edge_weighting
+            xy = xy.reshape(-1, nbody_parts, 3)
+            use_dat[_cam][..., 3] = xy[..., 2]
 
-    # Project points into common space, drop nans
-    proj_points = np.full((len(cameras), nframes, nbody_parts, 4), fill_value=np.nan)
-    for i, _cam in enumerate(cameras):
-        proj_points[i] = use_dat[_cam].copy()
-        R, t = new_transforms[(_cam, reference_camera)]
-        _points = use_dat[_cam].reshape(-1, 4)
-        _points = (R @ _points[:, :3].T).T + t
-        proj_points[i][:, :, :3] = _points.reshape(-1, nbody_parts, 3)
-        for _frame in range(nframes):
-            rem = np.isnan(proj_points[i][_frame]).any(axis=-1)
-            proj_points[i][_frame][rem, :] = np.nan
+        # Project points into common space, drop nans
+        proj_points = np.full((len(cameras), nframes, nbody_parts, 4), fill_value=np.nan)
+        for i, _cam in enumerate(cameras):
+            proj_points[i] = use_dat[_cam].copy()
+            R, t = new_transforms[(_cam, reference_camera)]
+            _points = use_dat[_cam].reshape(-1, 4)
+            _points = (R @ _points[:, :3].T).T + t
+            proj_points[i][:, :, :3] = _points.reshape(-1, nbody_parts, 3)
+            for _frame in range(nframes):
+                rem = np.isnan(proj_points[i][_frame]).any(axis=-1)
+                proj_points[i][_frame][rem, :] = np.nan
 
-    for i, _cam in enumerate(cameras):
-        if _cam == reference_camera:
-            continue
+        for i, _cam in enumerate(cameras):
+            if _cam == reference_camera:
+                continue
 
-        use_points = proj_points[i]
-        ref_points = proj_points[ref_index]
+            use_points = proj_points[i]
+            ref_points = proj_points[ref_index]
 
-        for _frame in range(nframes):
-            # Confidence threshold for high-confidence keypoints
-            confidence_threshold = 0.6
+            for _frame in range(nframes):
+                # Confidence threshold for high-confidence keypoints
+                confidence_threshold = 0.6 # TODO: HARD-CODED NEED TO FIX
 
-            # Find high-confidence keypoints in the reference camera
-            ref_confidences = ref_points[_frame, :, 3]
-            ref_high_conf_mask = ref_confidences >= confidence_threshold
+                # Find high-confidence keypoints in the reference camera
+                ref_confidences = ref_points[_frame, :, 3]
+                ref_high_conf_mask = ref_confidences >= confidence_threshold
 
-            # Find high-confidence keypoints in the current camera
-            use_confidences = use_points[_frame, :, 3]
-            use_high_conf_mask = use_confidences >= confidence_threshold
+                # Find high-confidence keypoints in the current camera
+                use_confidences = use_points[_frame, :, 3]
+                use_high_conf_mask = use_confidences >= confidence_threshold
 
-            # Compute the intersection of high-confidence keypoints
-            high_conf_mask = ref_high_conf_mask & use_high_conf_mask
+                # Compute the intersection of high-confidence keypoints
+                high_conf_mask = ref_high_conf_mask & use_high_conf_mask
 
-            # Check if there are more than 4 high-confidence keypoints in the intersection
-            if np.sum(high_conf_mask) > 4:
-                valid_use_points = use_points[_frame][high_conf_mask, :3]
-                valid_ref_points = ref_points[_frame][high_conf_mask, :3]
+                # TODO: WHY 4? MAKE A PARAMETER
+                # Check if there are more than 4 high-confidence keypoints in the intersection
+                if np.sum(high_conf_mask) > 4:
+                    valid_use_points = use_points[_frame][high_conf_mask, :3]
+                    valid_ref_points = ref_points[_frame][high_conf_mask, :3]
 
-                # Compute the bias using the valid high-confidence keypoints
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=RuntimeWarning)
-                    bias = np.nanmean(valid_use_points - valid_ref_points, axis=0)
+                    # Compute the bias using the valid high-confidence keypoints
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("ignore", category=RuntimeWarning)
+                        bias = np.nanmean(valid_use_points - valid_ref_points, axis=0)
 
-                # Replace NaNs in bias with the most recent bias term
-                bias[np.isnan(bias)] = 0
+                    # Replace NaNs in bias with the most recent bias term
+                    bias[np.isnan(bias)] = 0
 
-                # Apply the bias correction to all keypoints in the current frame
-                proj_points[i][_frame, :, :3] -= bias[None, :]
+                    # Apply the bias correction to all keypoints in the current frame
+                    proj_points[i][_frame, :, :3] -= bias[None, :]
 
-    # merge data via a weighted average
-    merge_method = "mixed"
-    min_confidence = 0.4
-    distance_threshold = 15
-    merged_data = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
-    merged_conf = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
-    for i in range(len(cameras)):
-        merged_conf[:, :, i] = proj_points[i, :, :, 3]
+        # merge data via a weighted average
+        merge_method = "mixed"
+        # min_confidence = 0.4 # TODO: HARD-CODED THRESHOLD NEED TO FIX, MAKE VARIABLE NAME MORE INFORMATIVE
+        # distance_threshold = 15 # TODO: HARD-CODED THRESHOLD
+        merged_data = np.full((nframes, nbody_parts, 3), fill_value=np.nan)
+        merged_conf = np.full((nframes, nbody_parts, len(cameras)), fill_value=np.nan) # TODO: DO NOT HARD-CODE NUMBER OF CAMERAS
+        for i in range(len(cameras)):
+            merged_conf[:, :, i] = proj_points[i, :, :, 3]
+    else:
+        merge_method = "single"
+        # merged data is simply the projected single camera here...        
+        merged_data = kpoints_dat_conv[reference_camera][..., :3].reshape(-1, nbody_parts, 3).copy()
+        merged_conf = kpoints_dat_conv[reference_camera][..., 3].reshape(-1, nbody_parts, 1).copy() 
+
     for _frame in range(nframes):
         # soft threshold the weights
         # merged_conf[_frame] = proj_points
@@ -472,7 +500,7 @@ def registration_pipeline(
                 confidences = proj_points[:, _frame, i, 3]
 
                 # Find the most confident camera for this body part
-                if np.all(np.isnan(confidences)) or np.nanmax(confidences) < min_confidence:
+                if np.all(np.isnan(confidences)) or (np.nanmax(confidences) < merge_min_confidence):
                     continue  # Skip if no valid predictions or all below the confidence threshold
                 ref_cam = np.nanargmax(confidences)
                 ref_point = proj_points[ref_cam, _frame, i, :3]
@@ -483,7 +511,7 @@ def registration_pipeline(
                 )
 
                 # Create a mask for valid points within the distance threshold
-                valid_mask = (distances <= distance_threshold) & ~np.isnan(distances)
+                valid_mask = (distances <= merge_distance_threshold) & ~np.isnan(distances)
 
                 # Skip merging if no valid points remain
                 if not np.any(valid_mask):
@@ -505,7 +533,8 @@ def registration_pipeline(
 
                 # Assign the merged keypoint to the output array
                 merged_data[_frame, i, :] = weighted_average
-            
+        elif merge_method == "single":
+            pass            
 
     all_keypoints = kpoints_metadata["node_names"]
     not_noisy_keypoints = list(set(all_keypoints).difference(noisy_keypoints))
@@ -539,8 +568,8 @@ def registration_pipeline(
     ]
 
     # save smoothed and raw after projecting into world coordinates (mm)...
+    # TODO: double check that we need all of these copies of the data (seems excessive...)
     merged_data_proj_smooth = merged_data_proc.copy()
-
     merged_data_proj_raw = merged_data.copy()
 
     all_bgrounds = {}
@@ -550,12 +579,15 @@ def registration_pipeline(
         bground_file = os.path.join(use_data_dir, "_bground", f"{_cam}.tiff")
         bground = tifffile.imread(bground_file)
         bground_roi = depth.plane.get_floor(bground.astype("float"), dilations=0)
-        R, t = new_transforms[(_cam, reference_camera)]
         _tmp = np.vstack(np.where(bground_roi > 0))
         roi_points = _tmp.copy()
         roi_points[0, :] = _tmp[1, :]
         roi_points[1, :] = _tmp[0, :]
-        all_bgrounds[_cam] = np.round((R[:2, :2] @ roi_points).T + t[:2]).astype("int")
+        try:
+            R, t = new_transforms[(_cam, reference_camera)]
+            all_bgrounds[_cam] = np.round((R[:2, :2] @ roi_points).T + t[:2]).astype("int")
+        except KeyError:
+            all_bgrounds[_cam] = roi_points
     all_roi_points = np.concatenate(list(all_bgrounds.values()))
     all_roi_points = np.unique(all_roi_points, axis=0)
     all_roi_points_proj = pcl.io.project_world_coordinates(
@@ -593,11 +625,18 @@ def registration_pipeline(
             data=final_conf.astype("float32"),
             compression="gzip",
         )
-        f.create_dataset(
-            "proj_point_conf",
-            data=proj_points[..., 3].astype("float32"),
-            compression="gzip",
-        )
+        try:
+            f.create_dataset(
+                "proj_point_conf",
+                data=proj_points[..., 3].astype("float32"),
+                compression="gzip",
+            )
+        except UnboundLocalError:
+            f.create_dataset(
+                "proj_point_conf",
+                data=merged_conf.astype("float32"),
+                compression="gzip",
+            )
 
         # for _col in use_frames.columns:
         #     f.create_dataset(

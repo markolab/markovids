@@ -913,7 +913,16 @@ def read_timestamps_multicam(
         ts[_cam]["frame_index"] = ts[_cam]["frame_index"].astype("Int32")
 
     if len(cameras) == 1:
+        use_cam = cameras[0]
+        ts = ts[use_cam]
+        ts["device_timestamp_ref"] = ts["device_timestamp"] - ts["device_timestamp"].iat[0]
+        cols = ts.columns
+        # only rename columns that are not use_timestamp_field
+        cols = pd.MultiIndex.from_tuples([(use_cam, _col) for _col in cols])
+        cols = [_col if _col[1] != use_timestamp_field else _col[1] for _col in cols]
+        ts.columns = cols
         return ts
+    
     # find a common frame id after burn_in frames
     # here, we assume the first 100-200 frames may have
     # initialization issues typical with machine vision cams

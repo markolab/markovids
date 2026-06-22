@@ -541,6 +541,8 @@ def sync_depth_videos(
     metadata = toml.load(os.path.join(data_dir, "metadata.toml"))
     cameras = sorted(list(metadata["cameras"].keys()))
 
+    use_vid_camera_order = [_cam for _cam in vid_camera_order if _cam in cameras]
+
     if (not undistort) or (intrinsics_matrix is None) or (distortion_coeffs is None):
         undistort = False
     else:
@@ -638,7 +640,7 @@ def sync_depth_videos(
             _cam: use_ts[(_cam, "frame_index")].astype("int32").to_list()
             for _cam in cameras
         }
-
+        
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             frame_batch = read_frames_multicam(
@@ -658,9 +660,9 @@ def sync_depth_videos(
             for k, v in frame_batch.items():
                 for i in range(len(v)):
                     frame_batch[k][i] = fill_holes(v[i])
-
+        
         montage_frames = video_montage(
-            [frame_batch[_cam][..., None] for _cam in vid_camera_order], ncols=2
+            [frame_batch[_cam][..., None] for _cam in use_vid_camera_order], ncols=2
         ).squeeze()
         # montage_frames = apply_opencv_colormap_stack(montage_frames, **colormap_kwargs)
         mp4_writer.write_frames(
