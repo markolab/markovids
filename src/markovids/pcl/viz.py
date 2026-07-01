@@ -5,6 +5,34 @@ from matplotlib.animation import FFMpegWriter
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 
+import os
+import subprocess
+
+import shlex
+class CustomFFMpegWriter(FFMpegWriter):
+    def _run(self):
+        # Build the full command with environment activation
+        # Important: Join self._args (the ffmpeg command and args) into a single string
+        _args = self._args()
+
+        _args[20] = shlex.quote(_args[20])
+
+        ffmpeg_cmd = ' '.join(_args)
+        # for i, arg in enumerate(self._args()):
+        #     print(f"{i} : {arg}")
+        # don't need this, just run from the current environment...
+        # shell_cmd = f"source ~/conda_activate && {ffmpeg_cmd}"
+
+        # Start the process with bash
+        # Start the process with bash -c to handle `source`
+        self._proc = subprocess.Popen(
+            ["bash", "-c", ffmpeg_cmd],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+
+
 
 def visualize_xyz_trajectories_to_mp4(
     xyz,  # (T, N, 3)
@@ -33,7 +61,7 @@ def visualize_xyz_trajectories_to_mp4(
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, projection="3d")
     ax.set_autoscale_on(False)
-    writer = FFMpegWriter(fps=fps)
+    writer = CustomFFMpegWriter(fps=fps)
 
     # Setup 3D scatter objects
     scatters = [

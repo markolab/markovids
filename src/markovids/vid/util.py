@@ -15,6 +15,9 @@ def video_montage(vids, ncols=2):
             or (_nchannels != nchannels)
         ):
             raise RuntimeError("Video dimensions not consistent")
+    
+    if len(vids) == 1:
+        return vids[0]
 
     dtype = vids[0].dtype
     nrows = np.ceil(len(vids) / ncols).astype("int")
@@ -31,15 +34,12 @@ def video_montage(vids, ncols=2):
             row += height
     return montage
 
-
 fill_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-
-
-def fill_holes(depth_map, mouse_height_threshold=30, fill_kernel=fill_kernel):
+def fill_holes(depth_map, mouse_height_threshold=30, fill_kernel=fill_kernel, iterations=2):
     # First, identify the mouse region using non-zero pixels
     mouse_region = depth_map > mouse_height_threshold
     expanded_mouse_region = cv2.dilate(
-        mouse_region.astype(np.uint8), fill_kernel, iterations=2
+        mouse_region.astype(np.uint8), fill_kernel, iterations=iterations
     )
 
     # Now find holes WITHIN the expanded mouse region
