@@ -442,6 +442,7 @@ def compute_bground(
     agg_func=np.median,
     reader_kwargs={"threads": 2},
     save_dir="_bground",
+    valid_range=None,
     force=False,
 ):
     import tifffile
@@ -461,7 +462,7 @@ def compute_bground(
         return tifffile.imread(bground_path)
 
     _bground = get_bground(
-        avi_file, spacing=step_size, agg_func=agg_func, **reader_kwargs
+        avi_file, spacing=step_size, agg_func=agg_func, valid_range=valid_range, **reader_kwargs
     )
     _bground = _bground.astype("uint16")
     tifffile.imwrite(bground_path, _bground)
@@ -495,6 +496,7 @@ def sync_depth_videos(
         "step_size": 1500,
         "agg_func": np.median,
         "reader_kwargs": {"threads": 5},
+        "valid_range": None,
         "save_dir": "_bground",
         "force": False,
     },
@@ -542,13 +544,17 @@ def sync_depth_videos(
     cameras = sorted(list(metadata["cameras"].keys()))
 
     use_vid_camera_order = [_cam for _cam in vid_camera_order if _cam in cameras]
-
+    if len(use_vid_camera_order) == 0:
+        warnings.warn(f"Cameras in specific camera order {vid_camera_order} not found, setting to {cameras}")
+        use_vid_camera_order = cameras
+    
     if (not undistort) or (intrinsics_matrix is None) or (distortion_coeffs is None):
         undistort = False
     else:
         print("Will undistort data")
 
-    preview_ncols = use_preview_kwargs.pop("ncols")
+    # make sure ncols>ncameras...
+    preview_ncols = np.minimum(use_preview_kwargs.pop("ncols"), len(cameras))
     preview_nrows = np.ceil(len(cameras) / preview_ncols)
 
     # need paths to timestamps and avi
@@ -629,6 +635,7 @@ def sync_depth_videos(
     total_frames = len(merged_ts)
     dat_paths = {_file: _cam for _file, _cam in zip(avi_paths, cameras)}
     nbatches = total_frames // batch_size
+    
     for _left_edge in tqdm(
         range(0, total_frames, batch_size), total=nbatches, desc="Frame batch"
     ):
@@ -664,6 +671,7 @@ def sync_depth_videos(
         montage_frames = video_montage(
             [frame_batch[_cam][..., None] for _cam in use_vid_camera_order], ncols=2
         ).squeeze()
+
         # montage_frames = apply_opencv_colormap_stack(montage_frames, **colormap_kwargs)
         mp4_writer.write_frames(
             montage_frames, frames_idx=range(left_edge, right_edge), progress_bar=False, **write_frames_kwargs

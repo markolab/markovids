@@ -1157,8 +1157,10 @@ def get_bground(
     reader.close()
 
     if valid_range is not None:
-        bground_frames[bground_frames < valid_range[0]] = np.nan
-        bground_frames[bground_frames > valid_range[1]] = np.nan
+        if valid_range[0] is not None:
+            bground_frames[bground_frames < valid_range[0]] = np.nan
+        if valid_range[1] is not None:
+            bground_frames[bground_frames > valid_range[1]] = np.nan
     bground = agg_func(bground_frames, axis=0)
 
     if valid_range is not None and interpolate_invalid:

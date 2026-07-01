@@ -199,7 +199,6 @@ def registration_pipeline(
             "Need intrinsics and distortion_coefficients dictionaries to continue"
         )
 
-
     cameras = list(intrinsics_matrix.keys())
     metadata_path = use_data_dir if meta_path is None else meta_path
     metadata_file = os.path.join(metadata_path, "metadata.toml")
@@ -209,6 +208,11 @@ def registration_pipeline(
     except FileNotFoundError as e:
         warnings.warn(f"Did not find metadata file {metadata_file}")
         return None
+
+    present_cameras = list(metadata["camera_metadata"].keys())
+    if reference_camera not in present_cameras:
+        warnings.warn(f"{reference_camera} not in {present_cameras}, setting to: {present_cameras[0]}")
+        reference_camera = present_cameras[0]    
 
     width = metadata["camera_metadata"][reference_camera]["Width"]
     height = metadata["camera_metadata"][reference_camera]["Height"]
