@@ -135,7 +135,8 @@ def registration_pipeline(
     meta_path = None,
     render=False,
     bundle_adjust=False,
-    transforms_path=None
+    transforms_path=None,
+    merge_method="mixed",
 ):
     """
     Executes the full 3D keypoint registration pipeline, including coordinate 
@@ -158,15 +159,28 @@ def registration_pipeline(
         meta_path (str, optional): Path to metadata file if not in use_data_dir.
         render (bool): If True, generates an MP4 visualization.
         bundle_adjust (bool): If True, uses bundle adjustment for registration.
+        transforms_path (str, optional): TOML file of precomputed camera transforms.
+        merge_method (str): How projected keypoints are combined across cameras:
+            'mixed' (confidence-weighted average of cameras within
+            merge_distance_threshold of the most confident camera), 'weighted'
+            (squashed-confidence weighted average of all cameras) or 'max'
+            (most confident camera). Ignored when only one camera is loaded.
 
     Returns:
         None: Results are saved directly to H5 and TOML files in the output path.
 
     Raises:
+        ValueError: If merge_method is not supported.
         RuntimeError: If intrinsic or distortion matrices are missing.
         IOError: If critical configuration or metadata files are not found.
     """
-    
+
+    valid_merge_methods = ("mixed", "weighted", "max")
+    if merge_method not in valid_merge_methods:
+        raise ValueError(
+            f"Unknown merge_method {merge_method!r}; expected one of {valid_merge_methods}"
+        )
+
     cfg = load_config(config_path)
     
     reference_camera = cfg["reference_camera"]
@@ -463,8 +477,7 @@ def registration_pipeline(
                     # Apply the bias correction to all keypoints in the current frame
                     proj_points[i][_frame, :, :3] -= bias[None, :]
 
-        # merge data via a weighted average
-        merge_method = "mixed"
+        # merge data using the requested merge_method
         # min_confidence = 0.4 # TODO: HARD-CODED THRESHOLD NEED TO FIX, MAKE VARIABLE NAME MORE INFORMATIVE
         # distance_threshold = 15 # TODO: HARD-CODED THRESHOLD
         merged_data = np.full((nframes, nbody_parts, 3), fill_value=np.nan)

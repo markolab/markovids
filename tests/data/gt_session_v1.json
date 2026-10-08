@@ -1,0 +1,154 @@
+{
+  "fixture_version": 1,
+  "description": "200-frame, 3-camera clip: curated 2D labels (gt_*) and SLEAP predictions (pred_*)",
+  "cameras": [
+    "Lucid Vision Labs-HTP003S-001-223702048",
+    "Lucid Vision Labs-HTP003S-001-223702266",
+    "Lucid Vision Labs-HTP003S-001-224500508"
+  ],
+  "reference_camera": "Lucid Vision Labs-HTP003S-001-224500508",
+  "node_names": [
+    "tail_tip",
+    "tail_middle",
+    "tail_base",
+    "back_bottom",
+    "back_middle_lower",
+    "back_middle_upper",
+    "back_top",
+    "left_ear",
+    "right_ear",
+    "snout",
+    "left_hip",
+    "right_hip",
+    "left_shoulder",
+    "right_shoulder"
+  ],
+  "labelling_skeleton": [
+    [
+      "tail_middle",
+      "tail_tip"
+    ],
+    [
+      "tail_base",
+      "tail_middle"
+    ],
+    [
+      "back_bottom",
+      "back_middle_lower"
+    ],
+    [
+      "back_middle_lower",
+      "back_middle_upper"
+    ],
+    [
+      "back_middle_upper",
+      "back_top"
+    ],
+    [
+      "back_top",
+      "snout"
+    ],
+    [
+      "left_ear",
+      "snout"
+    ],
+    [
+      "right_ear",
+      "snout"
+    ],
+    [
+      "left_hip",
+      "back_bottom"
+    ],
+    [
+      "right_hip",
+      "back_bottom"
+    ],
+    [
+      "left_shoulder",
+      "back_top"
+    ],
+    [
+      "right_shoulder",
+      "back_top"
+    ]
+  ],
+  "frame_window": [
+    3900,
+    4100
+  ],
+  "width": 640,
+  "height": 480,
+  "fps": 100,
+  "refit_transforms": {
+    "fit_keypoints": [
+      "back_bottom",
+      "back_middle_lower",
+      "back_middle_upper",
+      "back_top",
+      "left_hip",
+      "right_hip",
+      "left_shoulder",
+      "right_shoulder"
+    ],
+    "per_camera": {
+      "Lucid Vision Labs-HTP003S-001-223702048": {
+        "correspondences": 1310,
+        "median_residual_mm": 5.726,
+        "p90_residual_mm": 9.521
+      },
+      "Lucid Vision Labs-HTP003S-001-223702266": {
+        "correspondences": 231,
+        "median_residual_mm": 5.204,
+        "p90_residual_mm": 9.356
+      }
+    }
+  },
+  "config_sha256": "404cecafed74ff214bb73d2efc5f8d83a5ac75024730c518cf8aebf82b4b12b3",
+  "sources": {
+    "gt_session": {
+      "metadata.toml": "09264ecada1a773647621cc34d7784f314750e53f2515b1be70ec02e8ba0e5ae",
+      "_proc/sync_metadata.toml": "69faf7e9881fbd73b65e5180b8f1770fa710561332909150f0b8e3695ca3cac3",
+      "_proc/timestamps.txt": "b22faae7df962f05e26da56f349581aab1043bb5155ca51327b3eab51cd9c330",
+      "_proc/_kpoints_v1_3d/merged_keypoints.h5": "213c3c91e1b48d83f29a8621dbfcb0277f7fc4e9c8f890679d4104daa3c0cf98",
+      "_proc/_kpoints_v1_3d/merged_keypoints.toml": "f6611a765104ea06230ff3b780459e05f38f3db0bc0ffaa3acf3ae4980ae1cc9",
+      "_bground/Lucid Vision Labs-HTP003S-001-223702048.tiff": "953ea58913a389fe70a91d88b70dd34a5437277fcf5884152cd4ee5c615385ec",
+      "_proc/_kpoints_v1_2d/Lucid Vision Labs-HTP003S-001-223702048.pkl.gz": "e561b3e6c01f80efd5719aa5b263c3da8771ebeb590cdcf2699b937740fe2fb6",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-223702048.pkl.gz": "ac78e1571bbf0de3a15402f98ee72802ac23b22691d1c33d98d50f17530932fa",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-223702048.toml": "69b57185a16c426c13793cfbe971db69cb6e50c89dfbf39c40c1cec7688a6cc0",
+      "_proc/_keypoints_v1/Lucid Vision Labs-HTP003S-001-223702048.slp": "317d31a791b897fdd499229e74f0e320e885d21ee1d5c2eab2f7f53c3e4eca6c",
+      "_bground/Lucid Vision Labs-HTP003S-001-223702266.tiff": "c84540ac7665ccffbd7ee03616dedb498a1fb4928e1b2965a67540cc05f54823",
+      "_proc/_kpoints_v1_2d/Lucid Vision Labs-HTP003S-001-223702266.pkl.gz": "bd0f12b4176307c623cde83522a6990c9ede70acc593526696b1a8aa72820c91",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-223702266.pkl.gz": "5f91c1e952f1eeb2df2a49681bb7ee9524058849bda5afb3af87f2dbf0ec19fc",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-223702266.toml": "3befa1e0dc43f9079f1119210669f3ecc76d1d28edcb11c967045ae85c0726da",
+      "_proc/_keypoints_v1/Lucid Vision Labs-HTP003S-001-223702266.slp": "03113ca7a280060faf563b551195302fe6712a58592a8ab3d07c98754e2b1c55",
+      "_bground/Lucid Vision Labs-HTP003S-001-224500508.tiff": "7311b6fb38d839088158d7a74f0ed57ecf8eed7733e621c93c03100bffbd7e34",
+      "_proc/_kpoints_v1_2d/Lucid Vision Labs-HTP003S-001-224500508.pkl.gz": "e65b2c199142d03bdd035f4613eb4f541ef313745fbb1ccffbd4a36e06f53c4a",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-224500508.pkl.gz": "7da0a67e8164ac998e8976f29bc43cf8a6666e072ab7bcf7109179e99066898a",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-224500508.toml": "cbf6ea7a7af87c1467413ada3107ba2d70d1a2891a878cd682030d2453506f5b",
+      "_proc/_keypoints_v1/Lucid Vision Labs-HTP003S-001-224500508.slp": "8da7e9472776783f90444bfee64e53b81a47fa5a517d4e22bda7fb7f0c25f40f"
+    },
+    "pred_session": {
+      "metadata.toml": "09264ecada1a773647621cc34d7784f314750e53f2515b1be70ec02e8ba0e5ae",
+      "_proc/sync_metadata.toml": "69faf7e9881fbd73b65e5180b8f1770fa710561332909150f0b8e3695ca3cac3",
+      "_proc/timestamps.txt": "b22faae7df962f05e26da56f349581aab1043bb5155ca51327b3eab51cd9c330",
+      "_proc/_kpoints_v1_3d/merged_keypoints.h5": "efe45358e4c593eed35b553ece880ac1fabf19f800f323561572626349815d97",
+      "_proc/_kpoints_v1_3d/merged_keypoints.toml": "3cc76b2f3d7ef876d4cfa6f6fa66ba3a923937b08fb814c362de4f530ba76f88",
+      "_bground/Lucid Vision Labs-HTP003S-001-223702048.tiff": "953ea58913a389fe70a91d88b70dd34a5437277fcf5884152cd4ee5c615385ec",
+      "_proc/_kpoints_v1_2d/Lucid Vision Labs-HTP003S-001-223702048.pkl.gz": "14a4044c43b2baf2058e6f3420c1341044182f0a34d1ff4b4c1a4689419cfe3b",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-223702048.pkl.gz": "098a90ff5355909a6cfa2b36a45a2356ce2e8e8911902145af3f2460033d2b39",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-223702048.toml": "7db761c0af907d1926f8c44905a7579237321d50056291fdd3604a4cfde9b1f2",
+      "_proc/_keypoints_v1/Lucid Vision Labs-HTP003S-001-223702048.slp": "e508e11cfbc6b95174e77445f8fa90f0a0af8da97fef2c428929724358fc0dc9",
+      "_bground/Lucid Vision Labs-HTP003S-001-223702266.tiff": "c84540ac7665ccffbd7ee03616dedb498a1fb4928e1b2965a67540cc05f54823",
+      "_proc/_kpoints_v1_2d/Lucid Vision Labs-HTP003S-001-223702266.pkl.gz": "fb6f431d8a9e8700bb49a6752642e5e2f21be01651721fe7893a9c820b442396",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-223702266.pkl.gz": "1de089665c61175f04a7eac03e485cab181b942b3b4ff91009c138eda727dcfb",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-223702266.toml": "bbca44912a9fb888a781339b851d1097b8b326dca59fce48c027403e56977fa3",
+      "_proc/_keypoints_v1/Lucid Vision Labs-HTP003S-001-223702266.slp": "f07600b3c251c388565fb5a4df86451eec88df183202dcc0b54c12e0d975de02",
+      "_bground/Lucid Vision Labs-HTP003S-001-224500508.tiff": "7311b6fb38d839088158d7a74f0ed57ecf8eed7733e621c93c03100bffbd7e34",
+      "_proc/_kpoints_v1_2d/Lucid Vision Labs-HTP003S-001-224500508.pkl.gz": "dd5355f870ba34be8f8d4c6c8f337935008f195722cd447af71a7c4b8ae1eb0c",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-224500508.pkl.gz": "162e36c96fbe0c40764b44cfa0488b3ff3ead65d8d95f3e374fd991116109d3b",
+      "_proc/_kpoints_v1_3d/Lucid Vision Labs-HTP003S-001-224500508.toml": "d10c7f6784a233e4923500cceac8d574a93263e3034d53b2dc73f3fd7d603e84",
+      "_proc/_keypoints_v1/Lucid Vision Labs-HTP003S-001-224500508.slp": "70a0cb09390d0c3b1651cd2b857ca58c0911d74f990acf6e655a8a872d4a95fc"
+    }
+  }
+}

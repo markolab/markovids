@@ -1,0 +1,178 @@
+# Copied by tests/data/make_gt_fixture.py from config.toml; do not edit by hand.
+# ==========================================
+# GLOBAL EXPERIMENT SETTINGS
+# ==========================================
+fps = 100
+reference_camera = "Lucid Vision Labs-HTP003S-001-224500508"
+
+# Toggle specific processing steps
+proc_order = ["temporal", "bone", "interpolate", "bone"]
+
+# ==========================================
+# KEYPOINT LISTS
+# ==========================================
+noisy_keypoints = ["tail_tip", "tail_middle", "tail_base", "snout"]
+
+# Keypoints used to calculate the rigid body transform between cameras
+incl_kpoints_fit_transform = [
+    "back_bottom",
+    "back_middle_lower",
+    "back_middle_upper",
+    "back_top",
+    "left_hip",
+    "right_hip",
+    "left_shoulder",
+    "right_shoulder"
+]
+
+# Keypoints to plot in visualizations
+plt_kpoints = [
+    "tail_tip",
+    "tail_middle",
+    "tail_base",
+    "back_bottom",
+    "back_middle_lower",
+    "back_middle_upper",
+    "back_top",
+    "left_hip",
+    "right_hip",
+    "left_shoulder",
+    "right_shoulder"
+]
+
+# ==========================================
+# SKELETON DEFINITION
+# Format: [Start Node, End Node, "Unique Bone Name"]
+# ==========================================
+skeleton = [
+    ["tail_tip", "tail_middle", "bone_tail_1"],
+    ["tail_middle", "tail_base", "bone_tail_2"],
+    ["back_middle_lower", "back_middle_upper", "bone_spine_2"],
+    ["back_middle_upper", "back_top", "bone_spine_3"],
+    ["left_ear", "right_ear", "bone_head_width"],
+    ["left_shoulder", "right_shoulder", "bone_shoulder_width"],
+    ["left_hip", "right_hip", "bone_hip_width"],
+    ["back_top", "left_shoulder", "bone_l_shoulder_connect"],
+    ["back_top", "right_shoulder", "bone_r_shoulder_connect"],
+    ["back_bottom", "left_hip", "bone_l_hip_connect"],
+    ["back_bottom", "right_hip", "bone_r_hip_connect"],
+    ["snout", "left_ear", "bone_l_snout"],    # Included for wireless
+    ["snout", "right_ear", "bone_r_snout"]    # Included for wireless
+]
+
+# ==========================================
+# PARAMETER DICTIONARIES
+# ==========================================
+[smoothing_params]
+not_noisy = { window_length = 5, poly_order = 2 }
+noisy = { window_length = 25, poly_order = 2 }
+
+[hampel_params]
+window = 100
+threshold = 2.5
+replace = false
+
+[renderer_kwargs]
+trail_length = 5
+xlim = [-300, 300]
+ylim = [-300, 300]
+zlim = [-10, 105]
+
+# Confidence mapping (keys must be strings in TOML)
+[index_conf_map]
+"0" = 0.40
+"1" = 0.40
+"2" = 0.40
+"3" = 0.35
+"4" = 0.35
+"5" = 0.35
+"6" = 0.35
+"7" = 0.4
+"8" = 0.4
+"9" = 0.80
+"10" = 0.4
+"11" = 0.4
+"12" = 0.4
+"13" = 0.4
+
+# ==========================================
+# Z Computation PARAMETERS (WIRELESS VERSION)
+# ==========================================
+[resolve_z]
+
+[resolve_z.depth_processing]
+bilateral_kwargs = { d = 9, sigmaColor = 15, sigmaSpace = 3 }
+replace_height_spikes_kwargs = false
+
+[resolve_z.depth_processing_cable]
+bilateral_kwargs = { d = 11, sigmaColor = 30, sigmaSpace = 5 }
+replace_height_spikes_kwargs = { threshold = 100, ksize = 11 }
+
+[resolve_z.depth_patch_parameters]
+tail_tip = { patch_radius = 7, agg_func = 95 }
+tail_middle = { patch_radius = 8, agg_func = 75 }
+tail_base = { patch_radius = 8, agg_func = 75 }
+back_bottom = { patch_radius = 6, agg_func = 75 }
+back_middle_lower = { patch_radius = 10, agg_func = 75 }
+back_middle_upper = { patch_radius = 10, agg_func = 95 }
+back_top = { patch_radius = 8, agg_func = 90 }
+left_ear = { patch_radius = 7, agg_func = 95 }
+right_ear = { patch_radius = 5, agg_func = 90 }
+snout = { patch_radius = 10, agg_func = 75 }
+left_hip = { patch_radius = 8, agg_func = 75 }
+right_hip = { patch_radius = 10, agg_func = 75 }
+left_shoulder = { patch_radius = 8, agg_func = 75 }
+right_shoulder = { patch_radius = 10, agg_func = 75 }
+
+# ==========================================
+# POST PROCESSING PARAMETERS (WIRELESS VERSION)
+# ==========================================
+[post_processing]
+# Snout is included here
+incl_kpoints_post_processing = [
+    "tail_tip", "tail_middle", "tail_base", "back_bottom", 
+    "back_middle_lower", "back_middle_upper", "back_top", 
+    "left_hip", "right_hip", "left_shoulder", "right_shoulder", 
+    "left_ear", "right_ear", "snout"
+]
+
+[post_processing.temporal_regularization]
+lambda_jerk = 1e-09      
+lambda_snap = 0
+lambda_velocity = 0
+lambda_accel = 1e-08
+max_gap_fill = 0
+
+[post_processing.bone_length_regularization]
+correction_rate = 0.25    # Standard correction rate
+iterations = 15
+violation_threshold = 2.0
+
+[post_processing.pca]
+n_components = 5        
+n_iterations = 20
+
+[post_processing.align]
+exclude_from_center = ["snout", "tail_base", "tail_middle", "tail_tip", "left_ear", "right_ear"]
+use_median_centering = true
+
+[post_processing.align_compute]
+alignment_window = 11
+smooth_alignment = true
+
+[post_processing.post_align_hampel]
+window_size = 7
+n_sigmas = 3
+
+[post_processing.post_align_imputed_smoothing]
+sigma = 2.5
+medfilt_kernel = 5
+
+[post_processing.post_align_sgolay]
+window_length = 11
+polyorder = 3
+
+[post_processing.interpolation]
+length_threshold = 10
+method = "slinear"
+window = 250

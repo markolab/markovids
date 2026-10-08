@@ -21,6 +21,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+test = [
+	"pytest>=7",
+	"pytest-cov>=4",
+	"click",
+	"joblib",
+	"numba",
+	"scikit-learn",
+	"tifffile",
+]
 vedo = [
 	"vedo",
 	"imageio[ffmpeg]"
@@ -32,4 +41,3 @@ vedo = [
 
 [project.scripts]
 markovids = "markovids.cli:cli"
-
