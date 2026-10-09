@@ -1,15 +1,23 @@
 from typing import Tuple, Optional
+from markovids.vid.io import (
+    get_bground,
+    downsample_frames,
+    read_timestamps_multicam,
+    read_frames_multicam,
+    AviWriter,
+    MP4WriterPreview,
+)
+from markovids.vid.util import bp_filter, sos_filter, video_montage
 from tqdm.auto import tqdm
 
 import matplotlib.pyplot as plt
 import os
 import numpy as np
 
-default_win_kwargs = {"window": 20, "min_periods": 1, "center": True}
-
-
-def hampel(df, scale=0.6745, threshold=3, replace=True, insert_nans=True, **kwargs):
-    use_kwargs = default_win_kwargs | kwargs
+default_win_kwargs =  {"window": 20, "min_periods": 1, "center": True}
+def hampel(df, scale=.6745, threshold=3, replace=True, insert_nans=True, **kwargs):
+    # use_kwargs = default_win_kwargs | kwargs # only in 3.9 >
+    use_kwargs = {**default_win_kwargs, **kwargs}
     new_df = df.copy()
     meds = df.rolling(**use_kwargs).median()
     devs = (df - meds).abs()
@@ -19,22 +27,37 @@ def hampel(df, scale=0.6745, threshold=3, replace=True, insert_nans=True, **kwar
 
     # handles edges via min_periods etc.
     if insert_nans:
-        new_df[np.logical_or(np.isnan(meds), np.isnan(mads_dev))] = np.nan
+        new_df[np.logical_or(np.isnan(meds),np.isnan(mads_dev))] = np.nan
     if replace:
-        new_df[mads_dev > threshold] = meds[mads_dev > threshold]
+        new_df[mads_dev>threshold] = meds[mads_dev>threshold]
     else:
         new_df[mads_dev > threshold] = np.nan
     return new_df
 
-
 def squash_conf(conf, gamma=2, min_cutoff=0.05):
-    return np.where(conf > min_cutoff, conf**gamma, 0)
+    return np.where(conf > min_cutoff, conf ** gamma, 0)
 
+def squash_conf_dynamic(conf, cutoff_dict, default_cutoff=0.05, gamma=2):
+    """
+    conf: (frames, keypoints, dims) -> e.g. (3, 14, 1)
+    cutoff_dict: {index: value} -> e.g. {0: 0.1, 3: 0.8}
+    default_cutoff: Value to use for indices not present in the dict
+    """
+    n_points = conf.shape[1]
+    
+    cutoff_array = np.full(n_points, default_cutoff)
+    
+    for idx, val in cutoff_dict.items():
+        if 0 <= idx < n_points:
+            cutoff_array[idx] = val
+            
+    cutoff_array = cutoff_array.reshape(1, -1, 1)
+    
+    return np.where(conf > cutoff_array, conf ** gamma, 0)
 
 def savgol_filter_missing(x, window_length=7, poly_order=2):
     from scipy.signal import savgol_filter
     import pandas as pd
-
     proc_x = x.to_numpy()
     is_valid = np.isfinite(proc_x)
     proc_x[is_valid] = savgol_filter(proc_x[is_valid], window_length, poly_order)
@@ -419,6 +442,7 @@ def compute_bground(
     agg_func=np.median,
     reader_kwargs={"threads": 2},
     save_dir="_bground",
+    valid_range=None,
     force=False,
 ):
     import tifffile
@@ -438,7 +462,7 @@ def compute_bground(
         return tifffile.imread(bground_path)
 
     _bground = get_bground(
-        avi_file, spacing=step_size, agg_func=agg_func, **reader_kwargs
+        avi_file, spacing=step_size, agg_func=agg_func, valid_range=valid_range, **reader_kwargs
     )
     _bground = _bground.astype("uint16")
     tifffile.imwrite(bground_path, _bground)
@@ -472,6 +496,7 @@ def sync_depth_videos(
         "step_size": 1500,
         "agg_func": np.median,
         "reader_kwargs": {"threads": 5},
+        "valid_range": None,
         "save_dir": "_bground",
         "force": False,
     },
@@ -518,21 +543,37 @@ def sync_depth_videos(
     metadata = toml.load(os.path.join(data_dir, "metadata.toml"))
     cameras = sorted(list(metadata["cameras"].keys()))
 
+    use_vid_camera_order = [_cam for _cam in vid_camera_order if _cam in cameras]
+    if len(use_vid_camera_order) == 0:
+        warnings.warn(f"Cameras in specific camera order {vid_camera_order} not found, setting to {cameras}")
+        use_vid_camera_order = cameras
+    
     if (not undistort) or (intrinsics_matrix is None) or (distortion_coeffs is None):
         undistort = False
     else:
         print("Will undistort data")
 
-    preview_ncols = use_preview_kwargs.pop("ncols")
+    # make sure ncols>ncameras...
+    preview_ncols = np.minimum(use_preview_kwargs.pop("ncols"), len(cameras))
     preview_nrows = np.ceil(len(cameras) / preview_ncols)
 
     # need paths to timestamps and avi
     ts_paths = {os.path.join(data_dir, f"{_cam}.txt"): _cam for _cam in cameras}
     avi_paths = [os.path.join(data_dir, f"{_cam}.avi") for _cam in cameras]
-    ts, merged_ts = read_timestamps_multicam(
-        ts_paths,
-        **timestamp_kwargs,
-    )
+
+    # TODO: WIRE IN BYPASS HERE FOR ONE CAM
+    if len(cameras) > 1:
+        ts, merged_ts = read_timestamps_multicam(
+            ts_paths,
+            **timestamp_kwargs,
+        )
+    elif len(cameras) == 1:
+        merged_ts = read_timestamps_multicam(
+            ts_paths,
+            **timestamp_kwargs,
+        )
+    else:
+        raise RuntimeError(f"Number of cameras {len(cameras)} no supported")
 
     # sort timestamps
     column_order = [timestamp_kwargs["use_timestamp_field"]]
@@ -594,6 +635,7 @@ def sync_depth_videos(
     total_frames = len(merged_ts)
     dat_paths = {_file: _cam for _file, _cam in zip(avi_paths, cameras)}
     nbatches = total_frames // batch_size
+    
     for _left_edge in tqdm(
         range(0, total_frames, batch_size), total=nbatches, desc="Frame batch"
     ):
@@ -605,7 +647,7 @@ def sync_depth_videos(
             _cam: use_ts[(_cam, "frame_index")].astype("int32").to_list()
             for _cam in cameras
         }
-
+        
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             frame_batch = read_frames_multicam(
@@ -625,10 +667,11 @@ def sync_depth_videos(
             for k, v in frame_batch.items():
                 for i in range(len(v)):
                     frame_batch[k][i] = fill_holes(v[i])
-
+        
         montage_frames = video_montage(
-            [frame_batch[_cam][..., None] for _cam in vid_camera_order], ncols=2
+            [frame_batch[_cam][..., None] for _cam in use_vid_camera_order], ncols=2
         ).squeeze()
+
         # montage_frames = apply_opencv_colormap_stack(montage_frames, **colormap_kwargs)
         mp4_writer.write_frames(
             montage_frames, frames_idx=range(left_edge, right_edge), progress_bar=False, **write_frames_kwargs

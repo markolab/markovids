@@ -363,6 +363,8 @@ def cli_split_qd_vids(
 @click.option("--bground-step-size", type=int, default=1500, show_envvar=True, help="Frame step size for background calculation")
 @click.option("--bground-save-dir", type=str, default="_bground", show_envvar=True, help="Directory to save background images")
 @click.option("--bground-threads", type=int, default=5, show_envvar=True, help="Number of threads for background reader")
+@click.option("--bground-valid-range-min", type=float, default=1000, show_envvar=True, help="Min background value")
+@click.option("--bground-valid-range-max", type=float, default=2000, show_envvar=True, help="Min background value")
 @click.option("--bground-force/--no-bground-force", default=False, show_envvar=True, help="Force recompute background")
 # other options
 @click.option("--reader-threads", type=int, default=4, show_envvar=True, help="Number of threads for video reader")
@@ -388,6 +390,8 @@ def cli_sync_depth_video(
     bground_step_size,
     bground_save_dir,
     bground_threads,
+    bground_valid_range_min,
+    bground_valid_range_max,
     bground_force,
     reader_threads,
 ):
@@ -430,6 +434,7 @@ def cli_sync_depth_video(
         "agg_func": np.nanmedian,  # Fixed to median for now, changed to nanmedian 12-17-25 JEM
         "reader_kwargs": {"threads": bground_threads},
         "save_dir": bground_save_dir,
+        "valid_range": (bground_valid_range_min, bground_valid_range_max),
         "force": bground_force,
     }
 
