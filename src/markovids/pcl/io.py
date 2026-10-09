@@ -231,7 +231,6 @@ def depth_from_pcl_interpolate(
     distance_threshold=1.3,
     interpolation_method="linear",
 ):
-    from scipy.interpolate.interpnd import _ndim_coords_from_arrays
     from scipy.spatial import cKDTree
     from scipy.interpolate import griddata
 
@@ -314,7 +313,10 @@ def depth_from_pcl_interpolate(
 
     # https://stackoverflow.com/questions/30655749/how-to-set-a-maximum-distance-between-points-for-interpolation-when-using-scipy
     tree = cKDTree(np.vstack([u, v]).T)  # feed this in from elsewhere...
-    xi = _ndim_coords_from_arrays((xx, yy))  # can also precook this...
+    # (H, W, 2) grid of query coordinates; replaces the private scipy helper
+    # scipy.interpolate.interpnd._ndim_coords_from_arrays (removed from the
+    # public interpnd shim in newer scipy releases)
+    xi = np.stack((xx, yy), axis=-1).astype(float)
     dists, indexes = tree.query(xi)
     # print(f"Step 4 {time.process_time() - tic}")
     # tic = time.process_time()
