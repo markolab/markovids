@@ -22,7 +22,7 @@ def apply_final_smoothing(keypoints, keypoint_names, window_length=5, polyorder=
 
         for dim in range(3):
             trajectory = keypoints[:, kp_idx, dim]
-            if not np.all(np.isnan(trajectory)):
+            if not np.all(np.isnan(trajectory)): # TODO if at least one NaN, then NaNs will propagate
                 # Only smooth non-NaN portions
                 smoothed[:, kp_idx, dim] = savgol_filter(
                     trajectory, _window_length, _polyorder, mode="nearest"  # Good edge handling
