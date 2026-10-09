@@ -191,6 +191,26 @@ def test_should_crop_write_batches_and_apply_predicted_flips_when_crop_command_r
 
 
 @pytest.mark.known_bug
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="crop-video computes flip-corrected orientations but discards them before saving scalars")
+def test_should_save_flip_corrected_orientation_when_flip_model_flips_frames(crop_environment):
+    env = crop_environment
+    original = env.scalars["orientation_rad"].to_numpy().copy()
+    arguments = ["crop-video", str(env.registration), "--batch-size", "2", "--crop-size", "4", "4",
+                 "--flip-model", str(env.model), "--flip-model-proba-smoothing", "1"]
+
+    result = CliRunner().invoke(cli.cli, arguments)
+
+    assert result.exit_code == 0, result.output
+    # scalars are saved back to the file they were read from
+    env.parquet.assert_called_once_with(pd.read_parquet.call_args.args[0])
+    # the fake flip model flips every frame, so each orientation must be rotated by pi
+    corrected = original + np.pi
+    assert_allclose(env.scalars["orientation_rad"].to_numpy(), corrected)
+    # the unwrapped column must be derived from the corrected orientations
+    assert_allclose(env.scalars["orientation_rad_unwrap"].to_numpy(), np.unwrap(corrected, period=np.pi) + np.pi)
+
+
+@pytest.mark.known_bug
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason='crop-video overwrites its input HDF5 handle with the TOML stream and leaves it open')
 def test_should_close_input_handle_when_cropping_finishes(crop_environment):
     env = crop_environment
